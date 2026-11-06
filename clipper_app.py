@@ -179,45 +179,213 @@ def process_job(job_id, video, opts):
 # ----------------------------------------------------------------------- web
 PAGE = """<!doctype html><html lang="es"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Clipper</title><style>
-body{font-family:system-ui,sans-serif;background:#0f1115;color:#eee;margin:0;padding:18px;max-width:560px;margin:auto}
-h1{font-size:22px}label{display:block;margin:12px 0 4px;font-size:14px;color:#aab}
-input,select{width:100%;padding:10px;border-radius:8px;border:1px solid #333;background:#1a1d24;color:#eee;box-sizing:border-box;font-size:16px}
-.row{display:flex;gap:10px}.row>div{flex:1}.chk{display:flex;align-items:center;gap:8px;margin:10px 0}
-.chk input{width:auto}button{width:100%;margin-top:18px;padding:14px;border:0;border-radius:10px;background:#ff5a36;color:#fff;font-size:17px;font-weight:600}
-button:disabled{opacity:.5}#st{margin-top:14px;color:#9fd}.clip{margin-top:16px;background:#1a1d24;padding:10px;border-radius:10px}
-video{width:100%;border-radius:8px;max-height:420px}a{color:#ff8a6b}
-</style></head><body>
-<h1>Clipper &middot; clips verticales</h1>
-<label>Video</label><input type="file" id="f" accept="video/*">
-<div class="row"><div><label>Cuantos clips</label><input type="number" id="n" value="5" min="1" max="20"></div>
-<div><label>Segundos por clip</label><input type="number" id="len" value="30" min="5" max="90"></div></div>
-<label>Formato</label><select id="mode"><option value="blur">Fondo borroso (gameplay)</option><option value="crop">Recortar lados (llena pantalla)</option></select>
-<div class="chk"><input type="checkbox" id="zoom" checked><span>Zoom lento (push-in)</span></div>
-<div class="chk"><input type="checkbox" id="shake"><span>Vibracion de camara</span></div>
-<label>Texto gancho (primeros 3 seg, opcional)</label><input id="hook" placeholder="GTA 6 SALE EN 14 DIAS">
-<button id="go">Sacar clips</button><div id="st"></div><div id="res"></div>
+<meta name="theme-color" content="#07080a">
+<title>Clipper</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Anton&display=swap" rel="stylesheet">
+<style>
+:root{--night:#07080a;--concrete:#12141a;--steel:#2a2e36;--fog:#9aa1ac;--ink:#eef0f3;--signal:#f5c400;--alert:#ff6b5e;
+ --display:Anton,Impact,Haettenschweiler,"Arial Narrow Bold","Arial Narrow",sans-serif}
+*{box-sizing:border-box}
+html{background:var(--night)}
+body{margin:0;min-height:100vh;color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+ background:radial-gradient(120% 50% at 50% 0,#171a21 0,var(--night) 72%)}
+.wrap{max-width:560px;margin:0 auto;padding:0 18px 56px}
+button,input,select{font:inherit;color:inherit}
+
+/* ---- hero: the skyline is the waveform, the beam is the detector ---- */
+.sky{position:relative;height:290px;overflow:hidden;margin:0 -18px;background:linear-gradient(to top,#2a2f3a 0,#171a21 38%,transparent 78%)}
+.sky h1{position:relative;z-index:2;margin:0;padding:36px 18px 0;font:400 76px/.92 var(--display);letter-spacing:.015em;text-transform:uppercase}
+.sky p{position:relative;z-index:2;margin:12px 18px 0;max-width:30ch;color:var(--fog)}
+#city{position:absolute;left:0;bottom:0;width:100%;height:96px;z-index:1}
+.beam{position:absolute;z-index:0;left:72%;margin-left:-170px;bottom:70px;width:340px;height:320px;
+ transform-origin:50% 100%;transform:rotate(-4deg);
+ clip-path:polygon(47% 100%,53% 100%,100% 0,0 0);
+ background:linear-gradient(to top,rgba(245,196,0,.62),rgba(245,196,0,.10) 70%,rgba(245,196,0,0));
+ animation:sweep 2.6s cubic-bezier(.3,.7,.2,1) both}
+@keyframes sweep{0%{transform:rotate(-40deg);opacity:0}25%{opacity:1}60%{transform:rotate(14deg)}100%{transform:rotate(-4deg);opacity:1}}
+.busy .beam{animation:scan 3s ease-in-out infinite alternate}
+@keyframes scan{from{transform:rotate(-18deg)}to{transform:rotate(16deg)}}
+
+/* ---- console ---- */
+.console{background:var(--concrete);border:1px solid var(--steel);border-radius:6px;padding:18px;margin-top:-6px;position:relative;z-index:3}
+.drop{display:block;cursor:pointer;border:1.5px dashed #4a505b;border-radius:4px;padding:26px 16px;text-align:left;transition:border-color .15s,background .15s}
+.drop strong{display:block;font:400 26px/1.1 var(--display);letter-spacing:.03em;word-break:break-all}
+.drop span{color:var(--fog);font-size:14px}
+.drop:hover,.drop.over{border-color:var(--signal);background:rgba(245,196,0,.06)}
+.drop.has strong{color:var(--signal)}
+:focus-visible{outline:2px solid var(--signal);outline-offset:3px}
+.field{margin-top:18px}
+.field>span,legend{display:block;margin:0 0 6px;padding:0;font-size:14px;color:var(--fog)}
+.pair{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+input[type=number],input[type=text]{width:100%;padding:12px;background:var(--night);border:1px solid var(--steel);border-radius:4px;font-size:17px}
+input[type=number]:focus,input[type=text]:focus{border-color:var(--signal);outline:none;box-shadow:0 0 0 3px rgba(245,196,0,.18)}
+fieldset{border:0;margin:18px 0 0;padding:0}
+.seg{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.seg label{position:relative}
+.seg input{position:absolute;opacity:0;inset:0}
+.seg span{display:block;padding:12px 10px;border:1px solid var(--steel);border-radius:4px;text-align:center;background:var(--night);cursor:pointer;transition:background .15s,color .15s}
+.seg input:checked+span{background:var(--signal);border-color:var(--signal);color:#0b0b0b;font-weight:700}
+.seg input:focus-visible+span{outline:2px solid var(--signal);outline-offset:3px}
+.sw{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-top:1px solid var(--steel);cursor:pointer}
+.sw:first-of-type{margin-top:12px}
+.sw small{display:block;color:var(--fog);font-size:13px;line-height:1.3}
+.sw input{appearance:none;-webkit-appearance:none;flex:none;width:46px;height:27px;border-radius:14px;background:var(--steel);position:relative;transition:background .2s;margin:0;cursor:pointer}
+.sw input::after{content:"";position:absolute;top:3px;left:3px;width:21px;height:21px;border-radius:50%;background:#cfd3da;transition:transform .2s,background .2s}
+.sw input:checked{background:var(--signal)}
+.sw input:checked::after{transform:translateX(19px);background:#0b0b0b}
+.go{position:relative;display:block;width:100%;margin-top:20px;padding:17px 16px 21px;border:0;border-radius:4px;background:var(--signal);color:#0b0b0b;
+ font:400 25px/1 var(--display);letter-spacing:.06em;text-transform:uppercase;cursor:pointer;overflow:hidden}
+.go::after{content:"";position:absolute;left:0;right:0;bottom:0;height:6px;background:repeating-linear-gradient(-45deg,#0b0b0b 0 8px,transparent 8px 16px)}
+.go:active{transform:translateY(1px)}
+.go:disabled{opacity:.55;cursor:progress}
+
+/* ---- status + results ---- */
+#status{margin-top:20px}
+#st{margin:0 0 8px;color:var(--ink)}
+#st.err{color:var(--alert)}
+.bar{height:4px;background:var(--steel);border-radius:2px;overflow:hidden}
+.bar i{display:block;height:100%;width:0;background:var(--signal);transition:width .7s}
+#res h2{margin:34px 0 4px;font:400 34px/1 var(--display);letter-spacing:.03em;text-transform:uppercase}
+.clip{margin-top:18px;background:var(--concrete);border:1px solid var(--steel);border-radius:6px;overflow:hidden}
+.meta{display:flex;align-items:baseline;gap:12px;padding:12px 16px 4px}
+.meta b{font:400 44px/1 var(--display);color:var(--signal)}
+.meta span{color:var(--fog)}
+.clip video{display:block;width:100%;max-height:480px;background:#000}
+.dl{display:block;padding:14px 16px;text-align:center;font-weight:700;color:var(--signal);text-decoration:none;border-top:1px solid var(--steel)}
+.dl:hover{background:rgba(245,196,0,.08)}
+@media (prefers-reduced-motion:reduce){.beam,.busy .beam{animation:none;opacity:1;transform:rotate(-4deg)}.bar i,.drop,.seg span,.sw input,.sw input::after{transition:none}}
+@media (max-width:380px){.sky h1{font-size:60px}}
+</style></head><body class="">
+<div class="wrap">
+<header class="sky">
+ <div class="beam" aria-hidden="true"></div>
+ <h1>Clipper</h1>
+ <p>Encuentra los mejores momentos de tu video y conviértelos en clips verticales.</p>
+ <svg id="city" viewBox="0 0 560 96" preserveAspectRatio="none" aria-hidden="true"></svg>
+</header>
+
+<main class="console">
+ <label class="drop" id="drop" tabindex="0">
+  <input type="file" id="f" accept="video/*" hidden>
+  <strong id="dname">Elige tu video</strong>
+  <span id="dhint">Toca aquí o suéltalo en esta zona</span>
+ </label>
+
+ <div class="pair field">
+  <label><span>Cantidad de clips</span><input type="number" id="n" value="5" min="1" max="20" inputmode="numeric"></label>
+  <label><span>Segundos por clip</span><input type="number" id="len" value="30" min="5" max="90" inputmode="numeric"></label>
+ </div>
+
+ <fieldset>
+  <legend>Formato vertical</legend>
+  <div class="seg">
+   <label><input type="radio" name="mode" value="blur" checked><span>Fondo borroso</span></label>
+   <label><input type="radio" name="mode" value="crop"><span>Recortar lados</span></label>
+  </div>
+ </fieldset>
+
+ <label class="sw"><div>Zoom lento<small>La imagen se acerca poco a poco</small></div><input type="checkbox" id="zoom" checked></label>
+ <label class="sw"><div>Vibración de cámara<small>Sacudida suave durante todo el clip</small></div><input type="checkbox" id="shake"></label>
+
+ <label class="field" style="display:block"><span style="display:block;margin-bottom:6px;font-size:14px;color:var(--fog)">Texto gancho (primeros 3 segundos)</span>
+  <input type="text" id="hook" maxlength="60" placeholder="GTA 6 sale en 14 días"></label>
+
+ <button class="go" id="go" type="button">Sacar clips</button>
+
+ <div id="status" hidden aria-live="polite"><p id="st"></p><div class="bar"><i id="fill"></i></div></div>
+</main>
+
+<section id="res"></section>
+</div>
+
 <script>
 const $=id=>document.getElementById(id);
-$("go").onclick=async()=>{
- const f=$("f").files[0]; if(!f){$("st").textContent="Elige un video primero";return}
- $("go").disabled=true;$("res").innerHTML="";$("st").textContent="Subiendo video...";
- const q=new URLSearchParams({n:$("n").value,len:$("len").value,mode:$("mode").value,
-  zoom:$("zoom").checked?1:0,shake:$("shake").checked?1:0,hook:$("hook").value,name:f.name});
- try{
-  const r=await fetch("/upload?"+q,{method:"POST",body:f}); const j=await r.json();
-  if(j.error){throw new Error(j.error)}
-  poll(j.id);
- }catch(e){$("st").textContent="Error: "+e.message;$("go").disabled=false}
-};
-async function poll(id){
- const j=await (await fetch("/status?id="+id)).json();
- $("st").textContent=j.msg;
- $("res").innerHTML=j.clips.map(c=>`<div class="clip"><video controls playsinline src="/clips/${id}/${c.name}"></video>
-  <p>Desde ${c.start} &middot; <a href="/clips/${id}/${c.name}" download>Descargar ${c.name}</a></p></div>`).join("");
- if(j.state==="working"||j.state==="queued"){setTimeout(()=>poll(id),1500)}else{$("go").disabled=false}
+
+/* skyline: deterministic, so it looks the same every time */
+(function(){
+ let s=11;const r=()=>(s=(s*9301+49297)%233280)/233280;
+ const W=560,H=96,lamp=403;let x=0,out="";
+ while(x<W){
+  const w=14+Math.floor(r()*22);let h=22+Math.floor(r()*62);
+  if(x<=lamp&&x+w>lamp){h=70}
+  out+='<rect x="'+x+'" y="'+(H-h)+'" width="'+w+'" height="'+h+'" fill="#050607"/>';
+  for(let wy=H-h+6;wy<H-6;wy+=9){for(let wx=x+4;wx<x+w-4;wx+=7){
+   if(r()>0.87)out+='<rect x="'+wx+'" y="'+wy+'" width="3" height="4" fill="#f5c400" opacity="'+(0.25+r()*0.5).toFixed(2)+'"/>';}}
+  x+=w+Math.floor(r()*3);
+ }
+ out+='<rect x="'+(lamp-6)+'" y="'+(H-73)+'" width="12" height="3" fill="#f5c400"/>';
+ $("city").innerHTML=out;
+})();
+
+/* video picker */
+const drop=$("drop");
+function showFile(){
+ const f=$("f").files[0];
+ $("dname").textContent=f?f.name:"Elige tu video";
+ $("dhint").textContent=f?(Math.round(f.size/1048576)+" MB. Toca para cambiarlo"):"Toca aquí o suéltalo en esta zona";
+ drop.classList.toggle("has",!!f);
 }
-</script></body></html>"""
+$("f").onchange=showFile;
+drop.addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("f").click()}});
+["dragenter","dragover"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.add("over")}));
+["dragleave","drop"].forEach(t=>drop.addEventListener(t,e=>{e.preventDefault();drop.classList.remove("over")}));
+drop.addEventListener("drop",e=>{
+ const f=e.dataTransfer.files[0];
+ if(f){const dt=new DataTransfer();dt.items.add(f);$("f").files=dt.files;showFile()}
+});
+
+/* status helpers */
+let shown=0;
+function say(msg,err){$("status").hidden=false;$("st").textContent=msg;$("st").className=err?"err":""}
+function bar(p){$("fill").style.width=p+"%"}
+function busy(on){document.body.classList.toggle("busy",on);$("go").disabled=on}
+function pct(m){
+ const k=m.match(/clip ([0-9]+) de ([0-9]+)/);
+ if(k)return 25+70*(Number(k[1])-1)/Number(k[2]);
+ if(m.indexOf("Buscando")===0)return 20;
+ if(m.indexOf("Extrayendo")===0)return 10;
+ return 6;
+}
+
+$("go").onclick=async()=>{
+ const f=$("f").files[0];
+ if(!f){say("Elige un video antes de sacar los clips.",true);return}
+ busy(true);shown=0;$("res").innerHTML="";bar(4);say("Subiendo el video…");
+ const q=new URLSearchParams({
+  n:$("n").value,len:$("len").value,
+  mode:document.querySelector("input[name=mode]:checked").value,
+  zoom:$("zoom").checked?1:0,shake:$("shake").checked?1:0,
+  hook:$("hook").value,name:f.name});
+ try{
+  const r=await fetch("/upload?"+q,{method:"POST",body:f});
+  const j=await r.json();
+  if(j.error)throw new Error(j.error);
+  poll(j.id);
+ }catch(e){
+  say("No se pudo subir el video. Revisa que Clipper siga abierto y vuelve a intentarlo. ("+e.message+")",true);
+  busy(false);
+ }
+};
+
+async function poll(id){
+ let j;
+ try{j=await (await fetch("/status?id="+id)).json()}
+ catch(e){say("Se perdió la conexión con Clipper. Ábrelo de nuevo y repite el proceso.",true);busy(false);return}
+ if(j.state==="error"){say("No se pudo procesar el video: "+String(j.msg).slice(-220),true);busy(false);return}
+ say(j.msg==="Listo"?"Listo. Tus clips están abajo.":j.msg);
+ bar(j.state==="done"?100:pct(j.msg));
+ if(j.clips.length&&j.clips.length!==shown){
+  shown=j.clips.length;
+  $("res").innerHTML="<h2>Tus clips</h2>"+j.clips.map((c,i)=>
+   '<article class="clip"><div class="meta"><b>'+(i+1)+'</b><span>Empieza en el '+c.start+' del video original</span></div>'+
+   '<video controls playsinline preload="metadata" src="/clips/'+id+'/'+c.name+'#t=0.1"></video>'+
+   '<a class="dl" href="/clips/'+id+'/'+c.name+'" download>Descargar clip '+(i+1)+'</a></article>').join("");
+ }
+ if(j.state==="done"){busy(false)}else{setTimeout(()=>poll(id),1500)}
+}
+</script></body></html>
+"""
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -241,6 +409,9 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+        elif u.path == "/favicon.ico":
+            self.send_response(204)
+            self.end_headers()
         elif u.path == "/status":
             jid = parse_qs(u.query).get("id", [""])[0]
             job = JOBS.get(jid)
