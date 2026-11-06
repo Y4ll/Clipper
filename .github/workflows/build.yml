@@ -5,6 +5,7 @@ on:
   push:
     paths:
       - clipper_app.py
+      - icon.ico
       - .github/workflows/build.yml
 
 permissions:
@@ -23,7 +24,7 @@ jobs:
       - name: Crear Clipper.exe
         run: |
           python -m pip install pyinstaller
-          python -m PyInstaller --onefile --name Clipper clipper_app.py
+          python -m PyInstaller --onefile --noconsole --icon icon.ico --name Clipper clipper_app.py
 
       - name: Descargar ffmpeg.exe y armar el zip
         shell: pwsh

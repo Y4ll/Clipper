@@ -31,6 +31,7 @@ import sys
 import tempfile
 import textwrap
 import threading
+import time
 import uuid
 import wave
 import webbrowser
@@ -38,7 +39,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
+# El .exe se crea sin consola: en ese caso no hay stdout/stderr y print() fallaria
+if sys.stdout is None:
+    sys.stdout = open(os.devnull, "w")
+if sys.stderr is None:
+    sys.stderr = open(os.devnull, "w")
+
 SAMPLE_RATE = 4000
+IDLE_LIMIT = 120      # segundos sin que la ventana responda antes de cerrar el programa
+LAST_PING = [0.0]     # ultima vez que la ventana dijo "sigo aqui"
 WORK = Path(tempfile.gettempdir()) / "clipper_app_jobs"
 JOBS = {}  # id -> dict(state, msg, clips)
 MAX_UPLOAD = 4 * 1024 * 1024 * 1024  # 4 GB
@@ -62,7 +71,9 @@ def run_ffmpeg(cmd, cwd=None):
     # Sustituye el binario "ffmpeg" por la ruta resuelta en main()
     if cmd and cmd[0] == "ffmpeg":
         cmd = [FFMPEG] + list(cmd[1:])
-    r = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, cwd=cwd)
+    flags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
+    r = subprocess.run(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, cwd=cwd, creationflags=flags)
     if r.returncode != 0:
         raise RuntimeError(r.stderr.decode(errors="ignore")[-800:])
 
@@ -998,6 +1009,10 @@ fieldset{
 <script>
 const $=id=>document.getElementById(id);
 
+/* avisa al programa que la ventana sigue abierta */
+function beat(){fetch("/ping").catch(()=>{})}
+beat();setInterval(beat,4000);
+
 /* CIUDAD NOCTURNA */
 
 (function(){
@@ -1363,6 +1378,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+        elif u.path == "/ping":
+            LAST_PING[0] = time.time()
+            self.send_response(204)
+            self.end_headers()
         elif u.path == "/favicon.ico":
             self.send_response(204)
             self.end_headers()
@@ -1456,7 +1475,7 @@ def cleanup_old_jobs():
     if not WORK.is_dir():
         return
     for d in list(WORK.iterdir()):
-        if not d.is_dir():
+        if not d.is_dir() or d.name == "perfil":
             continue
         try:
             age = now - d.stat().st_mtime
@@ -1467,37 +1486,104 @@ def cleanup_old_jobs():
             pass
 
 
+def msg_box(text):
+    """Aviso visible: el .exe no tiene consola donde mostrar errores."""
+    try:
+        if os.name == "nt":
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(0, text, "Clipper", 0x10)
+            return
+    except Exception:  # noqa: BLE001
+        pass
+    print(text)
+
+
+def find_app_browser():
+    """Busca Edge, Chrome o Brave para abrir Clipper como ventana de app."""
+    cands = []
+    if os.name == "nt":
+        roots = [os.environ.get(k, "") for k in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA")]
+        rels = [r"Microsoft\Edge\Application\msedge.exe",
+                r"Google\Chrome\Application\chrome.exe",
+                r"BraveSoftware\Brave-Browser\Application\brave.exe"]
+        for rel in rels:
+            for root in roots:
+                if root:
+                    cands.append(os.path.join(root, rel))
+    for name in ("msedge", "google-chrome", "chromium", "chromium-browser", "chrome", "brave-browser"):
+        found = shutil.which(name)
+        if found:
+            cands.append(found)
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return None
+
+
+def open_app_window(url):
+    """Ventana propia, sin pestanas ni barra de direcciones (como una app)."""
+    exe = find_app_browser()
+    if exe:
+        try:
+            subprocess.Popen(
+                [exe, "--app=" + url, "--user-data-dir=" + str(WORK / "perfil"),
+                 "--window-size=820,960", "--no-first-run", "--no-default-browser-check"],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except OSError:
+            pass
+    webbrowser.open(url)
+
+
+def watchdog(srv):
+    """Cierra el programa cuando cierras la ventana (y no hay un video procesandose)."""
+    started = time.time()
+    while True:
+        time.sleep(3)
+        if any(j["state"] in ("queued", "working") for j in JOBS.values()):
+            continue
+        if LAST_PING[0]:
+            if time.time() - LAST_PING[0] > IDLE_LIMIT:
+                break
+        elif time.time() - started > 90:   # la ventana nunca llego a abrirse
+            break
+    srv.shutdown()
+
+
 def main():
     global FFMPEG
     p = argparse.ArgumentParser()
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--lan", action="store_true",
-                   help="Permite entrar desde otro dispositivo de tu wifi (ej. iPhone)")
+                   help="Modo servidor: sin ventana, accesible desde otro dispositivo de tu wifi")
     args = p.parse_args()
     # Si ffmpeg.exe esta junto al programa, se usa ese (no hace falta instalarlo)
     base = Path(sys.executable).parent if getattr(sys, "frozen", False) \
         else Path(__file__).resolve().parent
     os.environ["PATH"] = str(base) + os.pathsep + os.environ.get("PATH", "")
-    # Preferir la ruta absoluta si el binario está al lado del .exe / script
+    # Preferir la ruta absoluta si el binario esta al lado del .exe / script
     local_ff = base / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
     if local_ff.is_file():
         FFMPEG = str(local_ff)
     elif not shutil.which("ffmpeg"):
-        sys.exit("No encuentro ffmpeg. Pon ffmpeg.exe en la misma carpeta que este programa.")
+        msg_box("No encuentro ffmpeg. Pon ffmpeg.exe en la misma carpeta que Clipper.exe.")
+        return
     WORK.mkdir(parents=True, exist_ok=True)
     cleanup_old_jobs()
     host = "0.0.0.0" if args.lan else "127.0.0.1"
-    srv = ThreadingHTTPServer((host, args.port), Handler)
-    print(f"Abre en la laptop: http://127.0.0.1:{args.port}")
+    try:
+        srv = ThreadingHTTPServer((host, args.port), Handler)
+    except OSError:  # el puerto esta ocupado: usa uno libre
+        srv = ThreadingHTTPServer((host, 0), Handler)
+    port = srv.server_address[1]
+    url = f"http://127.0.0.1:{port}"
+    print(f"Clipper en {url}")
     if args.lan:
-        print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{args.port}")
+        print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{port}")
         print("Aviso: cualquiera en tu wifi puede entrar mientras esto este abierto.")
-    print("Ctrl+C para cerrar.")
-    if not args.lan:
-        try:
-            webbrowser.open(f"http://127.0.0.1:{args.port}")
-        except Exception:  # noqa: BLE001
-            pass
+    else:
+        threading.Thread(target=watchdog, args=(srv,), daemon=True).start()
+        open_app_window(url)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -1505,4 +1591,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:  # noqa: BLE001
+        msg_box("Clipper tuvo un error: " + str(e))
