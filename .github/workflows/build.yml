@@ -6,6 +6,7 @@ on:
     paths:
       - clipper_app.py
       - icon.ico
+      - installer.iss
       - .github/workflows/build.yml
 
 permissions:
@@ -37,16 +38,26 @@ jobs:
           Copy-Item $ff.FullName pack\
           Compress-Archive -Path pack\* -DestinationPath Clipper-Windows.zip
 
+      - name: Crear instalador (Inno Setup)
+        shell: pwsh
+        run: |
+          choco install innosetup -y --no-progress
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path output\ClipperSetup.exe)) { throw "No se creó ClipperSetup.exe" }
+
       - uses: actions/upload-artifact@v4
         with:
           name: Clipper-Windows
-          path: Clipper-Windows.zip
+          path: |
+            Clipper-Windows.zip
+            output/ClipperSetup.exe
 
-      - name: Publicar Release con el zip
+      - name: Publicar Release (instalador y zip)
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --cleanup-tag -y --repo ${{ github.repository }}
           $global:LASTEXITCODE = 0
-          gh release create latest Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga Clipper-Windows.zip, descomprímelo y abre Clipper.exe. Ya trae ffmpeg.exe dentro."
+          gh release create latest output/ClipperSetup.exe Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga ClipperSetup.exe para instalar Clipper con acceso directo y desinstalador. Clipper-Windows.zip es la versión portátil (descomprime y abre Clipper.exe). Las dos traen ffmpeg.exe."
