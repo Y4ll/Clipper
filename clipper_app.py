@@ -1200,6 +1200,15 @@ function renderClips(id,clips){
   link.download=c.name;
   link.textContent="↓ Descargar clip "+(i+1);
 
+  link.addEventListener("click",async e=>{
+   if(window.pywebview&&window.pywebview.api&&window.pywebview.api.save_clip){
+    e.preventDefault();
+    const r=await window.pywebview.api.save_clip(id,c.name);
+    if(r&&r.ok){say("Clip guardado en "+r.path)}
+    else if(r&&!r.cancel){say("No se pudo guardar el clip.",true)}
+   }
+  });
+
   article.append(meta,video,link);
   res.append(article);
 
@@ -1535,6 +1544,122 @@ def open_app_window(url):
     webbrowser.open(url)
 
 
+WEBVIEW2_URL = "https://go.microsoft.com/fwlink/p/?LinkId=2124703"  # instalador oficial de Microsoft
+WEBVIEW2_GUID = "{F3017226-FE2A-4295-8BDF-00C3A9A7E4C5}"
+
+
+def resource_path(name):
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / name
+
+
+def ask_box(text):
+    """Pregunta Si/No en una ventana de Windows. Fuera de Windows devuelve False."""
+    if os.name != "nt":
+        return False
+    try:
+        import ctypes
+        return ctypes.windll.user32.MessageBoxW(0, text, "Clipper", 0x24) == 6  # Si = 6
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def webview2_ready():
+    """True si el motor WebView2 de Windows esta instalado."""
+    if os.name != "nt":
+        return True
+    try:
+        import winreg
+        keys = [
+            (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\WOW6432Node\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_GUID),
+            (winreg.HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_GUID),
+            (winreg.HKEY_CURRENT_USER, "Software\\Microsoft\\EdgeUpdate\\Clients\\" + WEBVIEW2_GUID),
+        ]
+        for hive, path in keys:
+            try:
+                with winreg.OpenKey(hive, path) as k:
+                    version = winreg.QueryValueEx(k, "pv")[0]
+                    if version and version != "0.0.0.0":
+                        return True
+            except OSError:
+                continue
+    except Exception:  # noqa: BLE001
+        pass
+    return False
+
+
+def install_webview2():
+    """Descarga el instalador oficial de WebView2 y lo instala en silencio."""
+    import urllib.request
+    dest = Path(tempfile.gettempdir()) / "MicrosoftEdgeWebview2Setup.exe"
+    with urllib.request.urlopen(WEBVIEW2_URL, timeout=30) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f)
+    if dest.stat().st_size < 500000 or dest.read_bytes()[:2] != b"MZ":
+        return False
+    subprocess.run([str(dest), "/silent", "/install"], stdin=subprocess.DEVNULL,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   creationflags=0x08000000 if os.name == "nt" else 0, timeout=600)
+    return webview2_ready()
+
+
+class Api:
+    """Funciones que la pagina puede pedirle al programa (ventana nativa)."""
+
+    def __init__(self):
+        self._window = None  # con guion bajo: pywebview no lo expone a la pagina
+
+    def save_clip(self, job_id, name):
+        import webview
+        job_id, name = str(job_id), str(name)
+        if not job_id.isalnum() or os.path.basename(name) != name or not name.endswith(".mp4"):
+            return {"ok": False}
+        src = WORK / job_id / name
+        if not src.is_file():
+            return {"ok": False}
+        save_type = getattr(getattr(webview, "FileDialog", None), "SAVE", None)
+        if save_type is None:
+            save_type = webview.SAVE_DIALOG
+        dest = self._window.create_file_dialog(
+            save_type, save_filename=name, file_types=("Video MP4 (*.mp4)",))
+        if not dest:
+            return {"ok": False, "cancel": True}
+        path = dest if isinstance(dest, str) else dest[0]
+        shutil.copyfile(src, path)
+        return {"ok": True, "path": str(path)}
+
+
+def run_native_window(url):
+    """Abre Clipper en su propia ventana (motor WebView2), sin navegador.
+    Devuelve True si se uso y se cerro; False si no se pudo (usa el respaldo)."""
+    try:
+        import webview
+    except Exception:  # noqa: BLE001
+        return False
+    try:
+        if os.name == "nt" and not webview2_ready():
+            if not ask_box("Clipper necesita el componente WebView2 de Microsoft para abrir su "
+                           "ventana (descarga de unos 2 MB). Quieres instalarlo ahora?"):
+                return False
+            if not install_webview2():
+                msg_box("No se pudo instalar WebView2. Clipper se abrira en una ventana del "
+                        "navegador. Puedes instalarlo a mano desde "
+                        "developer.microsoft.com/microsoft-edge/webview2/consumer")
+                return False
+        api = Api()
+        win = webview.create_window("Clipper | Shadow Mode", url, js_api=api, width=900,
+                                    height=980, min_size=(420, 600), background_color="#08090c")
+        api._window = win
+        try:
+            webview.settings["ALLOW_DOWNLOADS"] = True
+        except Exception:  # noqa: BLE001
+            pass
+        icon = resource_path("icon.ico")
+        webview.start(icon=str(icon) if icon.is_file() else None)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def watchdog(srv):
     """Cierra el programa cuando cierras la ventana (y no hay un video procesandose)."""
     started = time.time()
@@ -1581,13 +1706,20 @@ def main():
     if args.lan:
         print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{port}")
         print("Aviso: cualquiera en tu wifi puede entrar mientras esto este abierto.")
-    else:
-        threading.Thread(target=watchdog, args=(srv,), daemon=True).start()
-        open_app_window(url)
-    try:
-        srv.serve_forever()
-    except KeyboardInterrupt:
-        print("\nCerrado.")
+        try:
+            srv.serve_forever()
+        except KeyboardInterrupt:
+            print("\nCerrado.")
+        return
+    server_thread = threading.Thread(target=srv.serve_forever, daemon=True)
+    server_thread.start()
+    if run_native_window(url):  # ventana propia; vuelve cuando la cierras
+        srv.shutdown()
+        return
+    # Respaldo: ventana de navegador en modo app
+    threading.Thread(target=watchdog, args=(srv,), daemon=True).start()
+    open_app_window(url)
+    server_thread.join()
 
 
 if __name__ == "__main__":

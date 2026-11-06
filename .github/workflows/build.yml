@@ -24,8 +24,8 @@ jobs:
 
       - name: Crear Clipper.exe
         run: |
-          python -m pip install pyinstaller
-          python -m PyInstaller --onefile --noconsole --icon icon.ico --name Clipper clipper_app.py
+          python -m pip install pyinstaller pywebview
+          python -m PyInstaller --onefile --noconsole --icon icon.ico --add-data "icon.ico;." --collect-all webview --collect-all clr_loader --collect-all pythonnet --name Clipper clipper_app.py
 
       - name: Descargar ffmpeg.exe y armar el zip
         shell: pwsh
