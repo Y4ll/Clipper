@@ -5,6 +5,10 @@ on:
   push:
     paths:
       - clipper_app.py
+      - .github/workflows/build.yml
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -36,3 +40,12 @@ jobs:
         with:
           name: Clipper-Windows
           path: Clipper-Windows.zip
+
+      - name: Publicar Release con el zip
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete latest --cleanup-tag -y --repo ${{ github.repository }}
+          $global:LASTEXITCODE = 0
+          gh release create latest Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga Clipper-Windows.zip, descomprímelo y abre Clipper.exe. Ya trae ffmpeg.exe dentro."
