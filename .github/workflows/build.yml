@@ -43,8 +43,14 @@ jobs:
           Copy-Item $ff.FullName pack\
           New-Item -ItemType Directory -Path pack\whisper -Force | Out-Null
           try {
-            $rel = gh api repos/ggml-org/whisper.cpp/releases/latest | ConvertFrom-Json
-            $asset = $rel.assets | Where-Object { $_.name -eq "whisper-bin-x64.zip" } | Select-Object -First 1
+            $rels = gh api "repos/ggml-org/whisper.cpp/releases?per_page=8" | ConvertFrom-Json
+            $asset = $null
+            foreach ($r in $rels) {
+              Write-Host ("release " + $r.tag_name + ": " + (($r.assets | ForEach-Object { $_.name }) -join ", "))
+              if (-not $asset) {
+                $asset = $r.assets | Where-Object { $_.name -match "x64" -and $_.name -match "bin" -and $_.name -notmatch "cublas|blas|cuda|vulkan" -and $_.name -match "\.zip$" } | Select-Object -First 1
+              }
+            }
             if (-not $asset) { throw "no hay whisper-bin-x64.zip" }
             Invoke-WebRequest -Uri $asset.browser_download_url -OutFile whisper.zip
             Expand-Archive whisper.zip -DestinationPath whisper_tmp
