@@ -99,6 +99,12 @@ details.card[open]>summary{margin-bottom:14px}
 
   <div class="banner" id="banner"><span id="bannerText">Hay una versión nueva de Clipper.</span><button class="btn sm go" id="btnUpd" style="font-size:14px">Actualizar</button></div>
 
+  <div class="card" id="intro" style="display:none;border-color:#6b5700">
+    <p class="label">Bienvenido a Clipper</p>
+    <p style="margin:0 0 8px"><b>Arrastra un video aquí abajo o pega un link</b> (YouTube, Kick…). Clipper encuentra los mejores momentos y te los deja en vertical. Revisas, cortas y descargas.</p>
+    <p class="note" style="margin:0 0 12px">Si Windows bloquea Clipper al abrirlo: clic en <b>Más información → Ejecutar de todas formas</b>, o añade una exclusión en Seguridad de Windows. Pasa porque el programa no tiene firma digital (es de pago); no hace nada raro y todo se procesa en tu PC.</p>
+    <button class="btn go" id="introOk" style="font-size:15px;padding:9px 16px">Entendido</button>
+  </div>
   <div class="hero">
     <h1>Del video largo al <b>clip viral</b></h1>
     <p>Detecta los mejores momentos y los deja en vertical 9:16. Gratis, en tu PC.</p>
@@ -113,7 +119,7 @@ details.card[open]>summary{margin-bottom:14px}
       <button class="btn" id="btnUrl">Traer</button>
     </div>
     <div class="grid" id="rangeBox" style="margin-top:10px">
-      <div class="field"><label>Solo los últimos (minutos)</label><input type="number" id="lastMin" min="0" placeholder="Todo el video"></div>
+      <div class="field"><label>Solo los últimos (minutos)</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
       <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
     </div>
     <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
@@ -181,7 +187,7 @@ details.card[open]>summary{margin-bottom:14px}
     <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
     <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
     <div class="field" style="margin-top:8px"><label>Velocidad</label><div class="chips" id="quality">
-      <button class="chip" data-v="fast">Rápido</button><button class="chip" data-v="best">Mejor calidad</button></div></div>
+      <button class="chip" data-v="fast" title="Menos calidad, mucho más veloz">Rápido</button><button class="chip" data-v="best" title="Se ve mejor, tarda más">Mejor calidad</button></div></div>
     <div class="field" style="margin-top:8px"><label>Fluidez (fps)</label><div class="chips" id="fps">
       <button class="chip" data-v="0">Igual que el original</button><button class="chip" data-v="30">30</button><button class="chip" data-v="60">60</button></div></div>
     <label class="tog" style="margin-top:8px"><input type="checkbox" id="autosave"><span>Guardar los clips solos en una carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
@@ -263,8 +269,8 @@ async function loadCaps(){
 }
 async function loadAssets(){
   try{const a=await (await API("/assets")).json();
-    $("#logoName").textContent=a.logo||"";$("#btnLogoDel").classList.toggle("hidden",!a.logo);
-    $("#fillerName").textContent=a.filler||"";$("#btnFillerDel").classList.toggle("hidden",!a.filler)}catch(e){}
+    $("#logoName").textContent=a.logo||"Sin logo: no se pondrá nada.";$("#btnLogoDel").classList.toggle("hidden",!a.logo);
+    $("#fillerName").textContent=a.filler||"Sin video de relleno: la pantalla dividida usará el fondo borroso.";$("#btnFillerDel").classList.toggle("hidden",!a.filler)}catch(e){}
 }
 async function pickAsset(role,accept){
   const inp=document.createElement("input");inp.type="file";inp.accept=accept;
@@ -445,6 +451,10 @@ function showClips(J,d){
   try{const s=await (await API("/settings")).json();Object.assign(S,s)}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
   paint();renderTexts();loadCaps();loadAssets();checkUpd();
+  if(!S.intro_seen)$("#intro").style.display="block";
+  $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
+  const open=new URLSearchParams(location.search).get("open");
+  if(open)open.split(",").forEach(id=>id&&addJobCard(id,"Video"));
   const beat=()=>fetch("/ping",{cache:"no-store"}).catch(()=>{});beat();setInterval(beat,5000);
 })();
 </script>

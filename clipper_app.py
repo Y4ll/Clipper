@@ -97,7 +97,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -805,6 +805,33 @@ def render_job(job_id, video, segments, o):
             pass
 
 
+def queue_local_file(path):
+    """Un video arrastrado sobre Clipper.exe (o pasado por la linea de comandos)."""
+    src = Path(path)
+    if not src.is_file() or src.suffix.lower() not in VIDEO_EXTS:
+        return None
+    job_id = new_job(src.name)
+    dest = WORK / job_id / ("input" + src.suffix.lower())
+    shutil.copyfile(src, dest)
+    st = load_settings()
+    want = int(clean_num(st.get("n"), 1, 40, 5))
+    seg = int(clean_num(st.get("len"), 3, 120, 30))
+    lang = st.get("sub_lang") if st.get("sub_lang") in ("es", "en", "auto") else "es"
+    smart = {"lang": lang} if st.get("smart") else None
+    threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart),
+                     daemon=True).start()
+    return job_id
+
+
+def cleanup_all():
+    """Al cerrar: borra los videos y clips temporales de esta sesion."""
+    if not WORK.exists():
+        return
+    for d in WORK.iterdir():
+        if d.is_dir() and d.name != "perfil":
+            shutil.rmtree(d, ignore_errors=True)
+
+
 def cleanup_old_jobs():
     now = time.time()
     if not WORK.exists():
@@ -1380,6 +1407,7 @@ def main():
     p.add_argument("--port", type=int, default=8000)
     p.add_argument("--lan", action="store_true",
                    help="Modo servidor: sin ventana, accesible desde otro dispositivo de tu wifi")
+    p.add_argument("files", nargs="*", help="Videos a abrir (puedes arrastrarlos sobre Clipper.exe)")
     args = p.parse_args()
     LAN_MODE = args.lan
     os.environ["PATH"] = str(APP_DIR) + os.pathsep + os.environ.get("PATH", "")
@@ -1399,6 +1427,10 @@ def main():
     port = srv.server_address[1]
     url = f"http://127.0.0.1:{port}"
     print(f"Clipper en {url}")
+    opened = [queue_local_file(f) for f in args.files[:5]]
+    opened = [j for j in opened if j]
+    if opened:
+        url += "?open=" + ",".join(opened)
     threading.Thread(target=detect_encoder, daemon=True).start()
     threading.Thread(target=check_update, daemon=True).start()
     if args.lan:
@@ -1413,11 +1445,13 @@ def main():
     server_thread.start()
     if run_native_window(url):  # ventana propia; vuelve cuando la cierras
         srv.shutdown()
+        cleanup_all()
         return
     # Respaldo: ventana de navegador en modo app
     threading.Thread(target=watchdog, args=(srv,), daemon=True).start()
     open_app_window(url)
     server_thread.join()
+    cleanup_all()
 
 
 if __name__ == "__main__":
