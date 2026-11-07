@@ -443,6 +443,64 @@ def gemini_title(text, lang, tone="directo"):
     raise RuntimeError(f"Gemini no respondio ({getattr(last_err, 'code', 'error')})")
 
 
+def gemini_rank(cands, want, length, job):
+    """Pide a Gemini que elija y ordene los mejores momentos.
+
+    Solo se manda metadata de cada tramo (segundo de inicio, duracion, nota de audio,
+    puntaje de volumen). Nunca se sube video ni audio a Google.
+    Devuelve (momentos_ordenados, True) o (cands[:want], False) si falla.
+    """
+    key = get_gemini_key()
+    if not key or not cands:
+        return cands[:want], False
+
+    items = []
+    for i, m in enumerate(cands):
+        items.append({"id": i, "inicio_s": round(m["start"], 1),
+                      "duracion_s": length,
+                      "nota_audio": round(m.get("score", 0), 2),
+                      "pico_max": round(m.get("peak", 0), 1)})
+
+    prompt = (
+        "Eres editor de clips virales para TikTok/Reels/Shorts. "
+        "Te doy una lista de momentos de un video con su segundo de inicio, duracion, "
+        "nota de audio (0-1) y pico maximo de volumen. "
+        f"Elige los {want} mejores momentos para hacer clips virales e impactantes. "
+        "Prioriza picos de accion y momentos con mucha energia. "
+        "Responde SOLO con JSON: {\"ids\": [lista de ids en orden de mejor a peor]}. "
+        "Nada mas.\n\nMomentos:\n" + json.dumps(items, ensure_ascii=False))
+
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                       "generationConfig": {"responseMimeType": "application/json",
+                                            "temperature": 0.3}}).encode("utf-8")
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(
+            f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = json.load(r)
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            ids = json.loads(raw).get("ids", [])
+            seen, ranked = set(), []
+            for i in ids:
+                if isinstance(i, int) and 0 <= i < len(cands) and i not in seen:
+                    ranked.append(cands[i])
+                    seen.add(i)
+            # Si Gemini no lleno los cupos, rellena con los mejores por nota
+            rest = [c for j, c in enumerate(cands) if j not in seen]
+            rest.sort(key=lambda m: m.get("score", 0), reverse=True)
+            ranked = (ranked + rest)[:want]
+            return ranked, True
+        except urllib.error.HTTPError as e:
+            if e.code in (404, 400):
+                continue
+            break
+        except Exception:  # noqa: BLE001
+            break
+    return cands[:want], False
+
+
 def snap_ends(moments, energy, duration, window=4):
     """Mueve el final de cada clip a la pausa mas cercana (+-4 s) para que no acabe a media frase."""
     if not energy:
@@ -1064,19 +1122,35 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         note = "Momentos listos"
         moments = None
         smart_used = False
-        if smart and energy and max(energy) >= 20 and find_whisper():
+        ai_rank_used = False
+        if smart and energy and max(energy) >= 20:
             query = smart.get("query", "")
+            use_ai_rank = smart.get("ai_rank") and get_gemini_key()
+            use_whisper = find_whisper()
             ncand = min(25, max(want * 4, 15)) if query else min(15, max(want * 3, want + 4))
             cands = pick_moments(energy, duration, length, ncand)
-            moments, used = smart_rank(job_id, video, cands, want, length, smart["lang"],
-                                       jdir, job, query)
-            moments = sorted(moments, key=lambda m: m["start"])
-            smart_used = bool(used)
-            note = "Momentos elegidos por volumen y por lo que se dice"
-            if query:
-                hits = sum(1 for m in moments if m.get("match"))
-                note = (f"Busqueda «{query[:30]}»: {hits} momento(s) donde se dice. "
-                        "Solo se busca en los tramos mas fuertes del video.")
+            if use_whisper:
+                moments, used = smart_rank(job_id, video, cands, want, length, smart["lang"],
+                                           jdir, job, query)
+                moments = sorted(moments, key=lambda m: m["start"])
+                smart_used = bool(used)
+                note = "Momentos elegidos por volumen y por lo que se dice"
+                if query:
+                    hits = sum(1 for m in moments if m.get("match"))
+                    note = (f"Busqueda «{query[:30]}»: {hits} momento(s) donde se dice. "
+                            "Solo se busca en los tramos mas fuertes del video.")
+            if use_ai_rank:
+                # Gemini re-ordena los mejores candidatos (sin subir video ni audio)
+                pool = moments if moments else cands
+                job.update(msg="La IA elige los mejores momentos...", pct=95)
+                ai_moments, ok = gemini_rank(pool, want, length, job)
+                if ok:
+                    moments = sorted(ai_moments, key=lambda m: m["start"])
+                    ai_rank_used = True
+                    if smart_used:
+                        note = "Momentos elegidos por voz y reordenados por la IA"
+                    else:
+                        note = "Momentos elegidos por la IA"
         if moments is None:
             moments = pick_moments(energy, duration, length, want)
         if snap and energy and max(energy) >= 20:
@@ -1087,6 +1161,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
         if smart and smart.get("query") and not find_whisper():
             note = "Esta instalacion no trae Whisper: no se pudo buscar por lo que se dice."
+        if smart and smart.get("ai_rank") and not get_gemini_key():
+            note += ". Falta la clave de Gemini: se eligieron los momentos por volumen."
         if job.get("note"):
             note += ". " + job["note"]
         job.update(state="ready", msg=note, pct=100, duration=duration,
@@ -1335,7 +1411,7 @@ def queue_local_file(path):
     want = int(clean_num(st.get("n"), 1, 40, 5))
     seg = int(clean_num(st.get("len"), 3, 600, 30))
     lang = st.get("sub_lang") if st.get("sub_lang") in ("es", "en", "auto") else "es"
-    smart = {"lang": lang} if st.get("smart") else None
+    smart = {"lang": lang, "ai_rank": bool(st.get("ai_rank"))} if (st.get("smart") or st.get("ai_rank")) else None
     threading.Thread(target=analyze_job,
                      args=(job_id, dest, None, want, seg, None, smart, st.get("snap") is not False),
                      daemon=True).start()
@@ -1588,7 +1664,8 @@ class Handler(BaseHTTPRequestHandler):
             rng = (a, b if b > a else None, last)
             qy = str(body.get("query") or "").strip()[:80]
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
-                     "query": qy} if (body.get("smart") or qy) else None
+                     "query": qy,
+                     "ai_rank": bool(body.get("ai_rank"))} if (body.get("smart") or qy or body.get("ai_rank")) else None
             snap = body.get("snap") is not False
             threading.Thread(target=analyze_job,
                              args=(job_id, None, url, want, length, rng, smart, snap),
@@ -1705,8 +1782,10 @@ class Handler(BaseHTTPRequestHandler):
         seg = int(clean_num(q.get("len", ["30"])[0], 3, 600, 30))
         lang = q.get("lang", ["es"])[0]
         qy = q.get("query", [""])[0].strip()[:80]
-        smart = {"lang": lang if lang in ("es", "en", "auto") else "es", "query": qy} \
-            if (q.get("smart", ["0"])[0] == "1" or qy) else None
+        ai_rank_q = q.get("ai_rank", ["0"])[0] == "1"
+        smart = {"lang": lang if lang in ("es", "en", "auto") else "es", "query": qy,
+                 "ai_rank": ai_rank_q} \
+            if (q.get("smart", ["0"])[0] == "1" or qy or ai_rank_q) else None
         snap = q.get("snap", ["1"])[0] != "0"
         threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart, snap),
                          daemon=True).start()
