@@ -84,6 +84,7 @@ LAN_MODE = False
 LAST_PING = [0.0]
 JOBS = {}                 # id -> datos que ve la pagina
 RT = {}                   # id -> {cancel: Event, proc: Popen}
+ENERGY = {}               # id -> energia por segundo (para zoom en los picos)
 ENCODER = {"name": None, "ready": False}
 HAS_ASS = [False]
 UPDATE = {"state": "idle", "available": False, "version": "", "url": ""}
@@ -101,9 +102,10 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
+MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
 
 
 def read_build():
@@ -285,6 +287,97 @@ def score_moments(moments, energy, smart_used):
     return out
 
 
+def keep_intervals(words, length):
+    """Tramos a conservar quitando pausas largas entre palabras. Solo si el clip es de gente hablando."""
+    if len(words) < 6 or len(words) / max(1.0, length) < 1.0:
+        return None
+    pad = 0.3
+    segs = []
+    st, en = max(0.0, words[0][0] - pad), words[0][1]
+    for a, b, _w in words[1:]:
+        if a - en > 0.9:
+            segs.append((st, en + pad))
+            st, en = a - pad, b
+        else:
+            en = max(en, b)
+    segs.append((st, min(float(length), en + 0.5)))
+    total = sum(e - x for x, e in segs)
+    if length - total < 1.0 or total < 5:
+        return None
+    return segs
+
+
+def remap_time(t, keep):
+    off = 0.0
+    for x, e in keep:
+        if t < x:
+            return off
+        if t <= e:
+            return off + (t - x)
+        off += e - x
+    return off
+
+
+def keep_expr(keep):
+    return "+".join(f"between(t,{x:.3f},{e:.3f})" for x, e in keep)
+
+
+def clip_peaks(energy, start, length, n=3):
+    """Segundos mas ruidosos del clip (separados) para dar un golpe de zoom ahi."""
+    if not energy:
+        return []
+    cand = sorted(((energy[t], t) for t in range(int(start) + 1, min(int(start + length) - 1, len(energy)))),
+                  reverse=True)
+    out = []
+    for val, t in cand:
+        if val <= 0:
+            break
+        if all(abs(t - x) >= 4 for x in out):
+            out.append(t)
+        if len(out) == n:
+            break
+    return sorted(round(t - start + 0.4, 2) for t in out)
+
+
+def has_audio_stream(video):
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", "-i", str(video)], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           creationflags=NO_WINDOW, timeout=60)
+        return b"Audio:" in r.stderr
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def build_audio(o, keep, has_audio, music_idx):
+    """Cadena de audio: quitar pausas, mejorar voz, normalizar y musica de fondo que baja cuando se habla."""
+    parts, cur = [], None
+    if has_audio:
+        chain = []
+        if keep:
+            chain += [f"aselect='{keep_expr(keep)}'", "asetpts=N/SR/TB"]
+        if o["enhance"]:
+            chain += ["highpass=f=80", "afftdn=nf=-25", "loudnorm=I=-14:TP=-1.5:LRA=11"]
+        if chain:
+            parts.append("[0:a]" + ",".join(chain) + "[ao]")
+            cur = "ao"
+        else:
+            cur = "0:a"
+    if music_idx is not None:
+        vol = max(0.0, min(1.0, o["music_vol"] / 100.0))
+        if cur:
+            parts.append(f"[{cur}]asplit=2[vo][vk]")
+            parts.append(f"[{music_idx}:a]volume={vol}[mv]")
+            parts.append("[mv][vk]sidechaincompress=threshold=0.05:ratio=10:attack=20:release=400[md]")
+            parts.append("[vo][md]amix=inputs=2:duration=first:normalize=0[aout]")
+        else:
+            parts.append(f"[{music_idx}:a]volume={vol}[aout]")
+        return ";".join(parts), "[aout]"
+    if parts:
+        return ";".join(parts), "[ao]"
+    return None, None
+
+
 def get_gemini_key():
     try:
         return KEY_FILE.read_text(encoding="utf-8").strip()
@@ -464,7 +557,7 @@ def parse_srt(text):
     return cues
 
 
-def transcribe(job_id, video, start, length, lang, jdir, idx):
+def transcribe(job_id, video, start, length, lang, jdir, idx, translate=False):
     wh = find_whisper()
     if not wh:
         return None
@@ -476,7 +569,7 @@ def transcribe(job_id, video, start, length, lang, jdir, idx):
     prefix = jdir / f"w{idx}"
     threads = max(2, (os.cpu_count() or 4) // 2)
     run_proc([str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-osrt", "-of", str(prefix),
-              "-ml", "1", "-sow", "-np", "-t", str(threads)], cwd=str(exe.parent), job_id=job_id)
+              "-ml", "1", "-sow", "-np", "-t", str(threads)] + (["-tr"] if translate else []), cwd=str(exe.parent), job_id=job_id)
     srt = Path(str(prefix) + ".srt")
     if not srt.is_file():
         return []
@@ -507,30 +600,44 @@ def ass_time(t):
     return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
 
 
-def write_ass(path, cues, font):
-    """Subtitulos palabra por palabra: el grupo se ve entero y la palabra que se dice va en amarillo."""
+def write_ass(path, cues, font, style="karaoke"):
+    """Subtitulos animados. Estilos: karaoke (grupo y palabra en amarillo), one (una palabra grande),
+    box (caja oscura) y clean (blancos, sin resaltar)."""
     fam, bold = FONT_FAMILY.get(Path(font).name.lower(), ("Arial", 1)) if font else ("Arial", 1)
+    size, outline, bstyle, back, per = 84, 7, 1, "&H00000000", 3
+    if style == "one":
+        size, per = 130, 1
+    elif style == "box":
+        size, outline, bstyle, back = 76, 14, 3, "&H99000000"
+    elif style == "clean":
+        size, per = 78, 4
     head = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n\n"
             "[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,"
             "BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,"
             "Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
-            f"Style: Default,{fam},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{-1 if bold else 0},0,0,0,"
-            "100,100,0,0,1,7,0,2,60,60,640,1\n\n"
+            f"Style: Default,{fam},{size},&H00FFFFFF,&H00FFFFFF,{back if bstyle == 3 else '&H00000000'},{back},"
+            f"{-1 if bold else 0},0,0,0,100,100,0,0,{bstyle},{outline},0,2,60,60,640,1\n\n"
             "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n")
 
     def clean(w):
         return re.sub(r"[{}\\]", "", w).strip().upper()
 
     lines = []
-    for grp in group_words(cues):
+    for grp in group_words(cues, per=per):
         for i, (a, b, _w) in enumerate(grp):
             end = grp[i + 1][0] if i + 1 < len(grp) and grp[i + 1][0] - b < 0.3 else b
             end = max(end, a + 0.12)
-            parts = []
-            for j, (_a, _b, w) in enumerate(grp):
-                color = "&H0000C4F5&" if j == i else "&H00FFFFFF&"   # BGR: amarillo F5C400
-                parts.append("{\\c" + color + "}" + clean(w))
-            lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(end)},Default,,0,0,0,," + " ".join(parts))
+            if style == "one":
+                pop = "{\\c&H0000C4F5&\\fscx70\\fscy70\\t(0,110,\\fscx100\\fscy100)}"
+                text = pop + clean(grp[i][2])
+            else:
+                parts = []
+                for j, (_a, _b, w) in enumerate(grp):
+                    hot = j == i and style != "clean"
+                    color = "&H0000C4F5&" if hot else "&H00FFFFFF&"   # BGR: amarillo F5C400
+                    parts.append("{\\c" + color + "}" + clean(w))
+                text = " ".join(parts)
+            lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(end)},Default,,0,0,0,," + text)
     Path(path).write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
@@ -587,7 +694,7 @@ def drawtext(font, textfile, size, color, y, a, b):
             f"enable='between(t,{a:.2f},{b:.2f})'")
 
 
-def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
+def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, peaks=None):
     mode = o["mode"]
     if mode == "split" and filler_idx is None:
         mode = "blur"
@@ -612,6 +719,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
              "scale=1080:1920:flags=bilinear[bg];"
              "[b]scale=1080:-2[fg];"
              "[bg][fg]overlay=(W-w)/2:(H-h)/2[v0]")
+    if keep:   # quitar pausas: solo pasan los tramos elegidos
+        g = f"[0:v]select='{keep_expr(keep)}',setpts=N/FRAME_RATE/TB[sv];" + g.replace("[0:v]", "[sv]")
     state = {"last": "v0", "n": 0, "g": g}
 
     def stage(expr):
@@ -620,13 +729,17 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
         state["g"] += f";[{state['last']}]{expr}[{new}]"
         state["last"] = new
 
-    if o["zoom"] or o["shake"] or o["punch"]:   # zoom, vibracion y golpe de inicio en un solo paso
+    peaks = peaks if (o["zoom_auto"] and peaks) else []
+    if o["zoom"] or o["shake"] or o["punch"] or peaks:   # zoom, vibracion y golpes en un solo paso
         base = 1166 if o["shake"] else 1080
         f = []
         if o["zoom"]:
             f.append(f"(1+0.14*min(t/{length},1))")
         if o["punch"]:   # el video arranca acercado y se asienta en medio segundo
             f.append("(1+0.2*max(0,1-t/0.5))")
+        if peaks:   # golpe de zoom en los momentos mas fuertes
+            bumps = "+".join(f"max(0,1-abs(t-{p})/0.35)" for p in peaks[:3])
+            f.append(f"(1+0.09*({bumps}))")
         if f:
             sc = f"scale=w='{base}*" + "*".join(f) + "':h=-2:eval=frame"
         else:
@@ -646,6 +759,12 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
         state["g"] += (f";[{logo_idx}:v]scale=220:-1,format=rgba,colorchannelmixer=aa=0.85[lg]"
                        f";[{state['last']}][lg]overlay={pos}[{new}]")
         state["last"] = new
+    if o["bar"]:   # barra de progreso del clip
+        state["n"] += 1
+        new = f"v{state['n']}"
+        state["g"] += (f";color=c=0xF5C400:s=1080x14:r=30[bar];[{state['last']}][bar]"
+                       f"overlay=x='-1080+1080*t/{length:.2f}':y=1730:shortest=1[{new}]")
+        state["last"] = new
     size = {"s": 64, "m": 84, "l": 108}[o["text_size"]]
     color = "0xF5C400" if o["text_color"] == "yellow" else "white"
     ypos = {"top": "h*0.10", "center": "(h-text_h)/2", "bottom": "h*0.74"}[o["text_pos"]]
@@ -654,7 +773,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
     return state["g"], state["last"]
 
 
-def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font, pre, ass=None):
+def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font, pre, ass=None,
+                  keep=None, peaks=None, has_audio=True, music=None):
     inputs = ["-ss", str(start), "-i", str(video)]
     idx, filler_idx, logo_idx = 1, None, None
     if o["mode"] == "split" and filler:
@@ -663,7 +783,11 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
     if logo:
         inputs += ["-i", str(logo)]
         logo_idx, idx = idx, idx + 1
-    graph, last = build_graph(o, length, filler_idx, logo_idx, texts_n, font, pre)
+    music_idx = None
+    if music:
+        inputs += ["-stream_loop", "-1", "-i", str(music)]
+        music_idx, idx = idx, idx + 1
+    graph, last = build_graph(o, length, filler_idx, logo_idx, texts_n, font, pre, keep, peaks)
     if ass:   # subtitulos palabra por palabra (libass); la fuente va en la carpeta fonts
         graph += f";[{last}]ass={ass}:fontsdir=fonts[vass]"
         last = "vass"
@@ -673,9 +797,13 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
         new = f"vs{j}"
         graph += f";[{last}]{drawtext(font, f'{pre}s{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
         last = new
+    agraph, alabel = build_audio(o, keep, has_audio, music_idx)
+    if agraph:
+        graph += ";" + agraph
+    amap = ["-map", alabel] if alabel else ["-map", "0:a?"]
     cmd = [FFMPEG, "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1",
            "-nostats"] + inputs + ["-t", str(length), "-filter_complex", graph,
-                                   "-map", f"[{last}]", "-map", "0:a?"] + \
+                                   "-map", f"[{last}]"] + amap + \
           video_args(enc, o["quality"]) + \
           ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
            str(out)]
@@ -740,6 +868,11 @@ def clean_opts(raw, seg_len=120):
         "fps": int(pick("fps", (0, 30, 60), 0)),
         "quality": pick("quality", ("fast", "best"), "fast"),
         "ai_title": bool(raw.get("ai_title")), "punch": bool(raw.get("punch")),
+        "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean"), "karaoke"),
+        "sub_translate": bool(raw.get("sub_translate")),
+        "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
+        "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
+        "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
     }
 
@@ -903,6 +1036,7 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         if duration <= 0:
             raise RuntimeError("No se pudo leer el video.")
         wave_data, step = waveform(energy)
+        ENERGY[job_id] = energy
         note = "Momentos listos"
         moments = None
         smart_used = False
@@ -947,6 +1081,10 @@ def render_job(job_id, video, segments, o):
         if o["mode"] == "split" and not filler:
             job["warnings"].append("Falta el video de relleno; se uso el fondo borroso.")
         logo = asset_path("logo")
+        music = asset_path("music") if o["music"] else None
+        if o["music"] and not music:
+            job["warnings"].append("Falta la musica de fondo; salio sin musica.")
+        audio_on = has_audio_stream(video)
         enc_box = [ENCODER["name"] if (o["gpu"] and ENCODER["name"]) else "libx264"]
         out_dir = None
         if o["autosave"]:
@@ -989,7 +1127,8 @@ def render_job(job_id, video, segments, o):
             heard = []
             if (o["subs"] or (o["ai_title"] and get_gemini_key())) and font:
                 try:
-                    got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i)
+                    got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i,
+                                     o["sub_translate"])
                     if got is None:
                         warn("Esta version no incluye subtitulos ni titulos con IA.")
                     else:
@@ -999,6 +1138,15 @@ def render_job(job_id, video, segments, o):
                     raise
                 except Exception:  # noqa: BLE001
                     warn(f"No se pudieron generar los subtitulos del clip {i}.")
+            keep, out_len = None, length
+            if o["cut_pauses"] and heard:
+                keep = keep_intervals(heard, length)
+            peaks = clip_peaks(ENERGY.get(job_id), start, length) if o["zoom_auto"] else []
+            if keep:
+                out_len = round(sum(e - x for x, e in keep), 2)
+                cues = [(remap_time(a, keep), remap_time(b, keep), w) for a, b, w in cues]
+                cues = [c for c in cues if c[1] > c[0] + 0.05]
+                peaks = [round(remap_time(t, keep), 2) for t in peaks]
             ai = None
             if o["ai_title"] and heard:
                 try:
@@ -1007,7 +1155,7 @@ def render_job(job_id, video, segments, o):
                     warn(str(e)[:120])
             oc = dict(o)
             if ai and not o["texts"]:
-                oc["texts"] = [{"text": ai["title"], "start": 0.3, "end": min(4.0, length)}]
+                oc["texts"] = [{"text": ai["title"], "start": 0.3, "end": min(4.0, out_len)}]
             wrap_w = {"s": 20, "m": 16, "l": 12}[o["text_size"]]
             texts = oc["texts"] if font else []
             for k, t in enumerate(texts):
@@ -1020,7 +1168,7 @@ def render_job(job_id, video, segments, o):
                     (jdir / "fonts").mkdir(exist_ok=True)
                     if font:
                         shutil.copyfile(font, jdir / "fonts" / Path(font).name)
-                    write_ass(jdir / f"{pre}subs.ass", cues, font)
+                    write_ass(jdir / f"{pre}subs.ass", cues, font, o["sub_style"])
                     ass = f"{pre}subs.ass"
                 except OSError:
                     ass = None
@@ -1031,9 +1179,10 @@ def render_job(job_id, video, segments, o):
             enc = enc_box[0]
 
             def attempt(enc_name, use_ass):
-                cmd = build_command(video, out, start, length, oc, enc_name, filler, logo,
-                                    len(texts), phrases, font, pre, ass if use_ass else None)
-                run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
+                cmd = build_command(video, out, start, out_len, oc, enc_name, filler, logo,
+                                    len(texts), phrases, font, pre, ass if use_ass else None,
+                                    keep, peaks, audio_on, music)
+                run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=out_len, on_progress=progress)
 
             use_ass = ass is not None
             try:
@@ -1069,7 +1218,7 @@ def render_job(job_id, video, segments, o):
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
-                                  "len": length, "saved": saved,
+                                  "len": round(out_len), "saved": saved,
                                   "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", []),
                                   "points": seg.get("points", 0)}
                 report()
@@ -1332,7 +1481,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json(load_settings())
         elif u.path == "/assets":
             self._json({r: (asset_path(r).name if asset_path(r) else None)
-                        for r in ("logo", "filler")})
+                        for r in ("logo", "filler", "music")})
         elif u.path == "/update":
             self._json(dict(UPDATE))
         elif u.path.startswith("/source/"):
@@ -1432,7 +1581,7 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"error": "No se pudieron guardar los ajustes."}, 400)
         elif u.path == "/asset/delete":
             role = q.get("role", [""])[0]
-            if role in ("logo", "filler"):
+            if role in ("logo", "filler", "music"):
                 for f in (ASSET_DIR.glob(role + ".*") if ASSET_DIR.is_dir() else []):
                     f.unlink(missing_ok=True)
             self._json({"ok": True})
@@ -1473,8 +1622,8 @@ class Handler(BaseHTTPRequestHandler):
         role = q.get("role", ["video"])[0]
         name = q.get("name", ["video.mp4"])[0]
         ext = Path(name).suffix.lower()
-        if role in ("logo", "filler"):
-            if ext not in (LOGO_EXTS if role == "logo" else VIDEO_EXTS):
+        if role in ("logo", "filler", "music"):
+            if ext not in {"logo": LOGO_EXTS, "filler": VIDEO_EXTS, "music": MUSIC_EXTS}[role]:
                 self._json({"error": "Formato de archivo no valido."}, 400)
                 return
             ASSET_DIR.mkdir(parents=True, exist_ok=True)
@@ -1494,7 +1643,7 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 fh.write(chunk)
                 remaining -= len(chunk)
-        if role in ("logo", "filler"):
+        if role in ("logo", "filler", "music"):
             self._json({"ok": True, "name": dest.name})
             return
         want = int(clean_num(q.get("n", ["5"])[0], 1, 40, 5))
