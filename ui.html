@@ -119,10 +119,10 @@ details.card[open]>summary{margin-bottom:14px}
       <button class="btn" id="btnUrl">Traer</button>
     </div>
     <div class="grid" id="rangeBox" style="margin-top:10px">
-      <div class="field"><label>Solo los últimos (minutos)</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
+      <div class="field"><label>Solo los últimos (minutos) · en directo: cuánto grabar</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
       <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
     </div>
-    <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
+    <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo, graba hasta 10 minutos (o los que pongas) y puedes parar cuando quieras con «Analizar lo grabado ya». Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
   </div>
 
   <div class="card">
@@ -305,11 +305,12 @@ $("#btnUpd").onclick=async()=>{$("#btnUpd").disabled=true;$("#bannerText").textC
 const JOBS={};
 function addJobCard(id,name){
   const el=document.createElement("div");el.className="job";el.id="job"+id;
-  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm danger cancel">Cancelar</button></div>
+  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm stoplive hidden">Analizar lo grabado ya</button><button class="btn sm danger cancel">Cancelar</button></div>
   <div class="bar"><i></i></div><div class="msg"></div><div class="body"></div>`;
   $("#jobs").prepend(el);
   JOBS[id]={id,el,name,state:"",segs:null,rendered:false,view:null};
   el.querySelector(".cancel").onclick=()=>post("/cancel?id="+id);
+  el.querySelector(".stoplive").onclick=()=>post("/stoplive?id="+id);
   poll(id);
 }
 function upload(file){
@@ -355,6 +356,7 @@ function update(J,d){
   el.querySelector(".state").textContent=LABEL[d.state]||d.state;
   el.querySelector(".bar i").style.width=(d.state==="ready"?100:d.pct)+"%";
   const m=el.querySelector(".msg");m.textContent=d.msg;m.classList.toggle("err",d.state==="error");
+  el.querySelector(".stoplive").classList.toggle("hidden",!d.live);
   el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
   if(d.state==="ready"&&J.view!=="ready"){
     J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||""}));J.waiting=S.review;

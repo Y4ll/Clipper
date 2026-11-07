@@ -595,11 +595,20 @@ def download_video(job_id, url, jdir, rng=None):
     if os.path.isabs(FFMPEG):
         opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
     offset = 0
-    if rng:
-        start, end, last = rng
-        if last:   # "solo los ultimos N minutos": hay que saber cuanto dura
-            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as y0:
-                dur = (y0.extract_info(url, download=False) or {}).get("duration") or 0
+    job.update(msg="Mirando el link...", pct=3)
+    with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as y0:
+        meta = y0.extract_info(url, download=False) or {}
+    if state["cancel"].is_set():
+        raise Cancelled()
+    if meta.get("is_live"):   # directo: no se descarga "todo", se graba un rato
+        return record_live(job_id, meta, jdir, rng)
+    dur = meta.get("duration") or 0
+    start, end, last = rng or (0, None, 0)
+    if not (start or end or last) and dur > 3600:
+        last = 20   # VOD largo sin tramo elegido: solo el final, para no bajar horas
+        job["note"] = "Es un video largo: use solo los ultimos 20 minutos."
+    if True:
+        if last:   # "solo los ultimos N minutos"
             start, end = (max(0, dur - last * 60), None) if dur else (0, None)
         if start or end:
             offset = start or 0
@@ -613,6 +622,64 @@ def download_video(job_id, url, jdir, rng=None):
     job["name"] = (str((info or {}).get("title") or "video"))[:80] + ".mp4"
     job["offset"] = offset
     return max(files, key=lambda f: f.stat().st_size)
+
+
+def record_live(job_id, meta, jdir, rng):
+    """Directo: graba lo que haya disponible (hasta N minutos) y se puede parar cuando quieras."""
+    job, state = JOBS[job_id], rt(job_id)
+    cap = int((rng[2] if rng and rng[2] else 0) or 10)     # minutos como maximo
+    stream = meta.get("url")
+    headers = dict(meta.get("http_headers") or {})
+    if not stream:
+        fm = [f for f in (meta.get("formats") or []) if f.get("url") and f.get("vcodec") != "none"]
+        if fm:
+            stream = fm[-1]["url"]
+            headers = dict(fm[-1].get("http_headers") or headers)
+    if not stream:
+        raise RuntimeError("No pude abrir el directo.")
+    out = jdir / "input.mp4"
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
+    if headers:
+        cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
+    if ".m3u8" in stream:
+        cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
+    cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy",
+            "-movflags", "frag_keyframe+empty_moov", str(out)]
+    job.update(live=True, msg="Grabando el directo...", pct=5)
+    job["name"] = (str(meta.get("title") or "directo"))[:80] + ".mp4"
+
+    def on_line(line):
+        if line.startswith("out_time_us="):
+            try:
+                sec = int(line.split("=", 1)[1]) / 1e6
+            except ValueError:
+                return
+            job["msg"] = f"Grabando el directo... {fmt_time(sec)} (maximo {cap} min)"
+            job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
+
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+    with state["lock"]:
+        state["procs"].add(p)
+        state["stdin"] = p.stdin
+    tail = deque(maxlen=10)
+    try:
+        for raw in p.stdout:
+            line = raw.decode("utf-8", errors="ignore").strip()
+            tail.append(line)
+            on_line(line)
+        p.wait()
+    finally:
+        with state["lock"]:
+            state["procs"].discard(p)
+            state["stdin"] = None
+        job["live"] = False
+    if state["cancel"].is_set():
+        raise Cancelled()
+    if not out.is_file() or out.stat().st_size < 10000:
+        raise RuntimeError("No se pudo grabar el directo. " + " ".join(tail)[-200:])
+    job["offset"] = 0
+    return out
 
 
 def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None):
@@ -651,6 +718,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             moments = pick_moments(energy, duration, length, want)
         if not energy or max(energy) < 20:
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
+        if job.get("note"):
+            note += ". " + job["note"]
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=moments)
@@ -1086,6 +1155,19 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                 if jid in JOBS and JOBS[jid]["state"] in ("ready", "queued"):
                     JOBS[jid].update(state="cancelled", msg="Cancelado")
+            self._json({"ok": True})
+        elif u.path == "/stoplive":
+            jid = q.get("id", [""])[0]
+            st = RT.get(jid)
+            if st:
+                with st["lock"]:
+                    pipe = st.get("stdin")
+                try:
+                    if pipe:
+                        pipe.write(b"q\n")
+                        pipe.flush()
+                except OSError:
+                    pass
             self._json({"ok": True})
         elif u.path == "/settings":
             body = self._body_json(30000)
