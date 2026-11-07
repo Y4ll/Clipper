@@ -24,9 +24,12 @@ Requisitos: Windows 10/11 de 64 bits, 4 GB de RAM (8 GB mejor). Clipper abre su 
 - **Tarjeta de video:** si tienes NVIDIA, Intel o AMD, la usa sola; arriba a la derecha ves si está activa. Si falla, usa el procesador.
 - **Selección inteligente:** además del volumen, escucha lo que se dice para elegir mejor. Tarda más en analizar.
 - **Cola:** puedes soltar varios videos; se procesan uno tras otro.
+- **Que la IA elija los momentos (opcional):** con tu clave de Gemini, la IA reordena los mejores candidatos. Solo se envían tiempos y notas de volumen, nunca el video.
+- **Clips automáticos en directo:** al pegar un directo, activa «Sacar clips automáticamente mientras graba».
+- **Monitor de directos:** añade canales (usuario o link de Kick) y Clipper los revisa cada 2 minutos; si uno entra en vivo, graba hasta 60 min y saca clips solo. Clipper tiene que estar abierto.
 
 ### Dónde se guardan tus cosas
-Ajustes, logo y video de relleno: `%APPDATA%\Clipper`. Los clips y videos temporales se borran al cerrar la app.
+Ajustes, lista de canales del monitor (`streamers.json`), logo y video de relleno: `%APPDATA%\Clipper`. Los clips y videos temporales se borran al cerrar la app.
 
 ## Actualizaciones
 Clipper avisa cuando hay una versión nueva y la instala con un clic.
