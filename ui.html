@@ -129,6 +129,13 @@ details.card[open]>summary{margin-bottom:14px}
     <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo, graba hasta 10 minutos (o los que pongas) y puedes parar cuando quieras con «Analizar lo grabado ya». Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
   </div>
 
+  <details class="card" id="monitorCard">
+    <summary class="label" style="cursor:pointer">Monitor de directos <span class="note" id="monCount"></span></summary>
+    <p class="note">Clipper revisa estos canales cada 2 minutos. Si uno entra en directo, graba hasta 60 min y saca clips solo. Clipper tiene que estar abierto.</p>
+    <div style="display:flex;gap:6px;margin-top:8px"><input type="text" id="monUrl" placeholder="Usuario o link (kick.com/…)" autocomplete="off" maxlength="300"><button class="btn" id="monAdd">Añadir</button></div>
+    <div id="monList" style="margin-top:8px"></div>
+  </details>
+
   <div class="card">
     <p class="label">2 · Formato</p>
     <div class="field"><label>Preajuste de un clic</label>
@@ -343,6 +350,29 @@ async function loadCaps(){
   if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
 }
+/* ---------- monitor de directos ---------- */
+const MON_SEEN=new Set();
+async function loadMonitor(){
+  let d;try{d=await (await API("/streamers")).json()}catch(e){return}
+  const list=d.streamers||[],box=$("#monList");
+  $("#monCount").textContent=list.length?("· "+list.filter(x=>x.live).length+" en vivo / "+list.length):"";
+  box.innerHTML=list.length?"":'<p class="note">Todavía no hay canales.</p>';
+  list.forEach(x=>{
+    const r=document.createElement("div");r.style.cssText="display:flex;gap:8px;align-items:center;margin:4px 0";
+    r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(x.url)}">${esc(x.name||x.url)} <small class="note">${x.live?"En vivo":(x.enabled?"Offline":"Pausado")}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
+    r.querySelector(".tg").onclick=async()=>{await post("/streamers/toggle",{url:x.url,enabled:!x.enabled});loadMonitor()};
+    r.querySelector(".rm").onclick=async()=>{await post("/streamers/delete",{url:x.url});loadMonitor()};
+    box.appendChild(r);
+    if(x.job_id&&!MON_SEEN.has(x.job_id)){MON_SEEN.add(x.job_id);addJobCard(x.job_id,x.name||"Directo")}
+  });
+}
+$("#monAdd").onclick=async()=>{
+  const v=$("#monUrl").value.trim();if(!v)return;
+  const r=await post("/streamers/add",{url:v});
+  if(r.error){alert(r.error);return}
+  $("#monUrl").value="";loadMonitor();
+};
+$("#monUrl").addEventListener("keydown",e=>{if(e.key==="Enter")$("#monAdd").click()});
 async function loadAssets(){
   try{const a=await (await API("/assets")).json();
     $("#logoName").textContent=a.logo||"Sin logo: no se pondrá nada.";$("#btnLogoDel").classList.toggle("hidden",!a.logo);
@@ -537,7 +567,7 @@ function showClips(J,d){
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s)}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);
   if(!S.intro_seen)$("#intro").style.display="block";
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");

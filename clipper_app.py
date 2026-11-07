@@ -108,6 +108,110 @@ LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
 
 
+# ------------------------------------------------------- monitor de directos
+STREAMERS_FILE = DATA_DIR / "streamers.json"
+MONITOR_EVERY = 120        # segundos entre revisiones
+MONITOR = {}               # url -> {live, job_id, last_check, recorded, error}
+MONITOR_LOCK = threading.Lock()
+MONITOR_WAKE = threading.Event()
+
+
+def load_streamers():
+    try:
+        data = json.loads(STREAMERS_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return []
+    out = []
+    for s in data if isinstance(data, list) else []:
+        if isinstance(s, dict) and re.match(r"^https?://\S+$", str(s.get("url", ""))):
+            out.append({"url": str(s["url"])[:300], "name": str(s.get("name") or "")[:60],
+                        "enabled": bool(s.get("enabled", True))})
+    return out
+
+
+def save_streamers(items):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = STREAMERS_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items[:50], ensure_ascii=False), encoding="utf-8")
+    tmp.replace(STREAMERS_FILE)
+
+
+def normalize_streamer_url(text):
+    """Acepta un link o solo el usuario (se asume Kick)."""
+    t = str(text or "").strip()
+    if re.match(r"^https?://\S+$", t) and len(t) <= 300:
+        return t
+    if re.match(r"^[A-Za-z0-9_\-]{2,40}$", t):
+        return "https://kick.com/" + t
+    return ""
+
+
+def streamer_is_live(url):
+    """True si el canal esta en directo ahora. Cualquier error cuenta como 'no esta'."""
+    if not importlib.util.find_spec("yt_dlp"):
+        return False
+    import yt_dlp
+    try:
+        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True,
+                               "socket_timeout": 20}) as y:
+            meta = y.extract_info(url, download=False) or {}
+        return bool(meta.get("is_live"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def monitor_job_active(job_id):
+    job = JOBS.get(job_id or "")
+    return bool(job) and job.get("state") in ("queued", "analyzing", "rendering")
+
+
+def monitor_check_once():
+    for s in load_streamers():
+        if not s["enabled"]:
+            continue
+        url = s["url"]
+        live = streamer_is_live(url)
+        with MONITOR_LOCK:
+            st = MONITOR.setdefault(url, {"live": False, "job_id": None, "recorded": False})
+            st.update(live=live, last_check=time.time())
+            if not live:
+                st["recorded"] = False      # volvio a estar offline: el proximo directo vuelve a grabarse
+                continue
+            if st["recorded"] or monitor_job_active(st["job_id"]):
+                continue
+            st["recorded"] = True
+        job_id = new_job(s["name"] or url)
+        JOBS[job_id]["monitor"] = True
+        with MONITOR_LOCK:
+            st["job_id"] = job_id
+        smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
+        threading.Thread(target=analyze_job,
+                         args=(job_id, None, url, 5, 30, (0, None, 60), smart, True),
+                         daemon=True).start()
+
+
+def monitor_loop():
+    while True:
+        try:
+            monitor_check_once()
+        except Exception:  # noqa: BLE001
+            pass
+        MONITOR_WAKE.wait(MONITOR_EVERY)
+        MONITOR_WAKE.clear()
+
+
+def streamers_view():
+    with MONITOR_LOCK:
+        mon = {k: dict(v) for k, v in MONITOR.items()}
+    out = []
+    for s in load_streamers():
+        st = mon.get(s["url"], {})
+        out.append(dict(s, live=bool(st.get("live")) and s["enabled"],
+                        job_id=st.get("job_id") if monitor_job_active(st.get("job_id")) else None,
+                        last_check=st.get("last_check")))
+    return out
+
+
 def read_build():
     f = resource_path("build.txt")
     try:
@@ -1693,6 +1797,8 @@ class Handler(BaseHTTPRequestHandler):
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
                         "gemini": bool(get_gemini_key())})
+        elif u.path == "/streamers":
+            self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
         elif u.path == "/settings":
             self._json(load_settings())
         elif u.path == "/assets":
@@ -1761,6 +1867,37 @@ class Handler(BaseHTTPRequestHandler):
                              args=(job_id, None, url, want, length, rng, smart, snap),
                              daemon=True).start()
             self._json({"id": job_id})
+        elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete"):
+            body = self._body_json() or {}
+            items = load_streamers()
+            if u.path == "/streamers/add":
+                url = normalize_streamer_url(body.get("url"))
+                if not url:
+                    self._json({"error": "Pon un link (https://kick.com/usuario) o solo el usuario."}, 400)
+                    return
+                if any(x["url"].lower() == url.lower() for x in items):
+                    self._json({"error": "Ese canal ya esta en la lista."}, 400)
+                    return
+                if len(items) >= 50:
+                    self._json({"error": "Maximo 50 canales."}, 400)
+                    return
+                name = str(body.get("name") or "").strip()[:60] or url.rstrip("/").split("/")[-1]
+                items.append({"url": url, "name": name, "enabled": True})
+            else:
+                url = str(body.get("url") or "")
+                if u.path == "/streamers/delete":
+                    items = [x for x in items if x["url"] != url]
+                else:
+                    for x in items:
+                        if x["url"] == url:
+                            x["enabled"] = bool(body.get("enabled"))
+            try:
+                save_streamers(items)
+            except OSError:
+                self._json({"error": "No pude guardar la lista."}, 500)
+                return
+            MONITOR_WAKE.set()
+            self._json({"ok": True})
         elif u.path == "/render":
             self._render()
         elif u.path == "/cancel":
@@ -2145,6 +2282,7 @@ def main():
         url += "?open=" + ",".join(opened)
     threading.Thread(target=detect_encoder, daemon=True).start()
     threading.Thread(target=check_update, daemon=True).start()
+    threading.Thread(target=monitor_loop, daemon=True).start()
     if args.lan:
         print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{port}")
         print("Aviso: cualquiera en tu wifi puede entrar mientras esto este abierto.")
