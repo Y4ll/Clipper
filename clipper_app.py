@@ -101,7 +101,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -255,6 +255,34 @@ def pick_moments(energy, duration, length, count):
         if len(chosen) == count:
             break
     return sorted(chosen, key=lambda m: m["start"])
+
+
+def score_moments(moments, energy, smart_used):
+    """Nota 0-100 de 'vale la pena publicar': volumen y variacion, habla, subida al inicio y duracion."""
+    if not energy:
+        return moments
+    ref = sorted(energy)[int(0.95 * (len(energy) - 1))] or max(energy) or 1.0
+    out = []
+    for m in moments:
+        st, ln = int(m["start"]), int(m["len"])
+        audio = min(1.0, m.get("score", 0.0) / 2.2)
+        first = energy[st:st + 3] or [0]
+        pre = energy[max(0, st - 5):st] or None
+        if pre:
+            ratio = (sum(first) / len(first)) / ((sum(pre) / len(pre)) + 0.05 * ref)
+            rise = max(0.0, min(1.0, (ratio - 1.0)))
+        else:
+            rise = 0.5
+        if 15 <= ln <= 45:
+            dur = 1.0
+        else:
+            dur = max(0.0, 1.0 - min(abs(ln - 15), abs(ln - 45)) / 30.0)
+        if smart_used:
+            val = 0.5 * audio + 0.3 * m.get("speech", 0.0) + 0.1 * rise + 0.1 * dur
+        else:
+            val = 0.65 * audio + 0.2 * rise + 0.15 * dur
+        out.append(dict(m, points=int(round(max(1, min(100, val * 100))))))
+    return out
 
 
 def get_gemini_key():
@@ -546,7 +574,7 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job):
             except Exception:  # noqa: BLE001
                 sc, snippet = 0.0, ""
         final = 0.6 * m["score"] / top + sc
-        scored.append(dict(m, text=snippet, final=final))
+        scored.append(dict(m, text=snippet, speech=sc, final=final))
     scored.sort(key=lambda m: m["final"], reverse=True)
     return scored[:want], True
 
@@ -592,11 +620,15 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
         state["g"] += f";[{state['last']}]{expr}[{new}]"
         state["last"] = new
 
-    if o["zoom"] or o["shake"]:   # zoom y vibracion en un solo paso
+    if o["zoom"] or o["shake"] or o["punch"]:   # zoom, vibracion y golpe de inicio en un solo paso
         base = 1166 if o["shake"] else 1080
-        w = f"{base}*(1+0.14*min(t/{length},1))" if o["zoom"] else str(base)
+        f = []
         if o["zoom"]:
-            sc = f"scale=w='{w}':h=-2:eval=frame"
+            f.append(f"(1+0.14*min(t/{length},1))")
+        if o["punch"]:   # el video arranca acercado y se asienta en medio segundo
+            f.append("(1+0.2*max(0,1-t/0.5))")
+        if f:
+            sc = f"scale=w='{base}*" + "*".join(f) + "':h=-2:eval=frame"
         else:
             sc = f"scale={base}:-2"
         if o["shake"]:
@@ -707,7 +739,7 @@ def clean_opts(raw, seg_len=120):
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
         "fps": int(pick("fps", (0, 30, 60), 0)),
         "quality": pick("quality", ("fast", "best"), "fast"),
-        "ai_title": bool(raw.get("ai_title")),
+        "ai_title": bool(raw.get("ai_title")), "punch": bool(raw.get("punch")),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
     }
 
@@ -873,16 +905,20 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         wave_data, step = waveform(energy)
         note = "Momentos listos"
         moments = None
+        smart_used = False
         if smart and energy and max(energy) >= 20 and find_whisper():
             cands = pick_moments(energy, duration, length, min(15, max(want * 3, want + 4)))
             moments, used = smart_rank(job_id, video, cands, want, length, smart["lang"],
                                        jdir, job)
             moments = sorted(moments, key=lambda m: m["start"])
+            smart_used = bool(used)
             note = "Momentos elegidos por volumen y por lo que se dice"
         if moments is None:
             moments = pick_moments(energy, duration, length, want)
         if snap and energy and max(energy) >= 20:
             moments = snap_ends(moments, energy, duration)
+        if energy and max(energy) >= 20:
+            moments = score_moments(moments, energy, smart_used)
         if not energy or max(energy) < 20:
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
         if job.get("note"):
@@ -1034,7 +1070,8 @@ def render_job(job_id, video, segments, o):
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
                                   "len": length, "saved": saved,
-                                  "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", [])}
+                                  "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", []),
+                                  "points": seg.get("points", 0)}
                 report()
 
         cpus = os.cpu_count() or 2
@@ -1064,7 +1101,8 @@ def render_job(job_id, video, segments, o):
         if real:
             raise real[0]
         job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"],
-                         "title": r["title"], "tags": r["tags"]} for r in results if r]
+                         "title": r["title"], "tags": r["tags"], "points": r["points"]}
+                        for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
     except Cancelled:
@@ -1491,7 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
                 continue
             if job["duration"] and start >= job["duration"]:
                 continue
-            segs.append({"start": round(start, 1), "len": round(length, 1)})
+            segs.append({"start": round(start, 1), "len": round(length, 1),
+                         "points": int(clean_num(s.get("points"), 0, 100, 0))})
         if not segs:
             self._json({"error": "Agrega al menos un momento."}, 400)
             return
