@@ -470,7 +470,9 @@ function update(J,d){
   const m=el.querySelector(".msg");m.textContent=d.msg;m.classList.toggle("err",d.state==="error");
   el.querySelector(".stoplive").classList.toggle("hidden",!d.live);
   el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
-  if(d.state==="ready"&&J.view!=="ready"){
+  (d.children||[]).forEach(cid=>{if(!MON_SEEN.has(cid)){MON_SEEN.add(cid);addJobCard(cid,"Lote del directo")}});
+  if(d.state==="ready"&&d._auto_render&&J.view!=="ready"){J.view="ready";J.waiting=false}   // lote del directo: se corta solo
+  else if(d.state==="ready"&&J.view!=="ready"){
     J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||"",points:x.points||0,match:!!x.match}));J.waiting=S.review;
     if(S.review)buildEditor(J,d);else startRender(J);
   }

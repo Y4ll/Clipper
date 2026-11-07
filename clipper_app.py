@@ -1186,6 +1186,8 @@ def _live_clipper(job_id, out, state, opts):
         ts = datetime.datetime.now().strftime("%H:%M")
         child_name = f"{base_name[:40]} · {ts}"
         child_id = new_job(child_name)
+        JOBS[child_id]["_auto_render"] = bool(opts.get("auto_render"))
+        JOBS[job_id].setdefault("children", []).append(child_id)
         child_jdir = WORK / child_id
         child_jdir.mkdir(parents=True, exist_ok=True)
         frag = child_jdir / "input.mp4"
@@ -1278,6 +1280,17 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     return out
 
 
+def auto_render(job_id, video, moments):
+    """Lote de un directo: corta los clips solo con los ajustes guardados y los guarda en la carpeta elegida."""
+    cfg = dict(load_settings())
+    cfg["autosave"] = True      # si hay carpeta de salida, se guardan ahi; si no, quedan para descargar
+    o = clean_opts(cfg)
+    segs = [{"start": round(float(m["start"]), 1), "len": round(float(m.get("len") or 30), 1),
+             "points": int(m.get("points") or 0)} for m in moments[:40]]
+    JOBS[job_id].update(state="rendering", msg="Cortando clips solos...", pct=0)
+    threading.Thread(target=render_job, args=(job_id, video, segs, o), daemon=True).start()
+
+
 def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None, snap=True):
     job, jdir = JOBS[job_id], WORK / job_id
     try:
@@ -1288,7 +1301,7 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
                 job["_live_opts"] = {"want": want, "length": length,
                                      "smart": {k: v for k, v in smart.items()
                                                if k != "live_clips"},
-                                     "snap": snap}
+                                     "snap": snap, "auto_render": True}
             video = download_video(job_id, url, jdir, rng)
         job.update(state="analyzing", msg="Extrayendo el audio...", pct=12)
         duration = probe_duration(video)
@@ -1358,6 +1371,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=moments)
+        if job.get("_auto_render") and moments:
+            auto_render(job_id, video, moments)
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
