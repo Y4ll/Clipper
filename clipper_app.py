@@ -1013,7 +1013,8 @@ def download_video(job_id, url, jdir, rng=None):
     if state["cancel"].is_set():
         raise Cancelled()
     if meta.get("is_live"):   # directo: no se descarga "todo", se graba un rato
-        return record_live(job_id, meta, jdir, rng)
+        return record_live(job_id, meta, jdir, rng,
+                           live_opts=job.get("_live_opts"))
     dur = meta.get("duration") or 0
     start, end, last = rng or (0, None, 0)
     if not (start or end or last) and dur > 3600:
@@ -1036,7 +1037,77 @@ def download_video(job_id, url, jdir, rng=None):
     return max(files, key=lambda f: f.stat().st_size)
 
 
-def record_live(job_id, meta, jdir, rng):
+LIVE_CLIP_EVERY = 5 * 60   # cada cuantos segundos grabados se saca un lote de clips
+
+
+def _live_clipper(job_id, out, state, opts):
+    """Hilo que saca clips cada LIVE_CLIP_EVERY segundos mientras se graba el directo.
+
+    Espera a que haya suficiente video grabado, corta un fragmento temporal con ffmpeg
+    (nunca toca el archivo principal) y lanza un analyze_job secundario.
+    Cuando analyze_job termina la UI lo muestra como un job normal aparte.
+    """
+    want = opts["want"]
+    length = opts["length"]
+    smart = opts["smart"]
+    snap = opts["snap"]
+    base_name = opts["name"]
+    clip_every = max(60, LIVE_CLIP_EVERY)      # minimo 1 min entre lotes
+    min_needed = length * max(2, want // 2)    # segundos minimos grabados para valer la pena
+    last_clip_at = 0.0
+    reported_sec = 0.0
+
+    while not state["cancel"].is_set():
+        time.sleep(2)
+        if state["cancel"].is_set():
+            break
+        # Seguimos mientras el job padre siga grabando (live=True en su dict)
+        if not JOBS.get(job_id, {}).get("live"):
+            break
+        try:
+            cur_sec = float(JOBS[job_id].get("_rec_sec", 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if cur_sec < min_needed:
+            continue
+        if cur_sec - last_clip_at < clip_every:
+            continue
+
+        # Cuanto video queremos analizar: lo que cabe en el lote actual
+        seg_dur = int(min(cur_sec, length * want * 1.5))
+        seg_start = max(0.0, cur_sec - seg_dur)
+
+        # Crear job hijo antes de copiar para que aparezca en la UI
+        import datetime
+        ts = datetime.datetime.now().strftime("%H:%M")
+        child_name = f"{base_name[:40]} · {ts}"
+        child_id = new_job(child_name)
+        child_jdir = WORK / child_id
+        child_jdir.mkdir(parents=True, exist_ok=True)
+        frag = child_jdir / "input.mp4"
+
+        # Copiar el fragmento con re-encode minimo para que el mp4 sea autocontenido
+        try:
+            subprocess.run(
+                [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", str(seg_start), "-i", str(out),
+                 "-t", str(seg_dur), "-c", "copy", str(frag)],
+                timeout=120, creationflags=NO_WINDOW)
+        except Exception:  # noqa: BLE001
+            JOBS[child_id].update(state="error", msg="No se pudo cortar el fragmento del directo.")
+            continue
+
+        if not frag.is_file() or frag.stat().st_size < 10000:
+            JOBS[child_id].update(state="error", msg="Fragmento del directo vacio.")
+            continue
+
+        last_clip_at = cur_sec
+        threading.Thread(target=analyze_job,
+                         args=(child_id, frag, None, want, length, None, smart, snap),
+                         daemon=True).start()
+
+
+def record_live(job_id, meta, jdir, rng, live_opts=None):
     """Directo: graba lo que haya disponible (hasta N minutos) y se puede parar cuando quieras."""
     job, state = JOBS[job_id], rt(job_id)
     cap = int((rng[2] if rng and rng[2] else 0) or 10)     # minutos como maximo
@@ -1058,7 +1129,15 @@ def record_live(job_id, meta, jdir, rng):
     cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy",
             "-movflags", "frag_keyframe+empty_moov", str(out)]
     job.update(live=True, msg="Grabando el directo...", pct=5)
-    job["name"] = (str(meta.get("title") or "directo"))[:80] + ".mp4"
+    title = (str(meta.get("title") or "directo"))[:80]
+    job["name"] = title + ".mp4"
+
+    # Lanzar hilo de clipeo automatico si se pidio
+    if live_opts:
+        live_opts["name"] = title
+        threading.Thread(target=_live_clipper,
+                         args=(job_id, out, state, live_opts),
+                         daemon=True).start()
 
     def on_line(line):
         if line.startswith("out_time_us="):
@@ -1066,6 +1145,7 @@ def record_live(job_id, meta, jdir, rng):
                 sec = int(line.split("=", 1)[1]) / 1e6
             except ValueError:
                 return
+            job["_rec_sec"] = sec
             job["msg"] = f"Grabando el directo... {fmt_time(sec)} (maximo {cap} min)"
             job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
 
@@ -1099,6 +1179,12 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
     try:
         if url:
             job.update(state="analyzing", msg="Descargando el video...", pct=2)
+            # Si el stream es un directo y se pide clipeo automatico, dejamos las opts en el job
+            if smart and smart.get("live_clips"):
+                job["_live_opts"] = {"want": want, "length": length,
+                                     "smart": {k: v for k, v in smart.items()
+                                               if k != "live_clips"},
+                                     "snap": snap}
             video = download_video(job_id, url, jdir, rng)
         job.update(state="analyzing", msg="Extrayendo el audio...", pct=12)
         duration = probe_duration(video)
@@ -1663,9 +1749,13 @@ class Handler(BaseHTTPRequestHandler):
             last = clean_num(body.get("last_min"), 0, 2000, 0)
             rng = (a, b if b > a else None, last)
             qy = str(body.get("query") or "").strip()[:80]
+            live_clips = bool(body.get("live_clips"))
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
                      "query": qy,
-                     "ai_rank": bool(body.get("ai_rank"))} if (body.get("smart") or qy or body.get("ai_rank")) else None
+                     "ai_rank": bool(body.get("ai_rank")),
+                     "live_clips": live_clips} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
+            if live_clips and not smart:
+                smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
             snap = body.get("snap") is not False
             threading.Thread(target=analyze_job,
                              args=(job_id, None, url, want, length, rng, smart, snap),
