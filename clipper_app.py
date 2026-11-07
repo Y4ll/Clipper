@@ -91,7 +91,9 @@ RT = {}                   # id -> {cancel: Event, proc: Popen}
 ENERGY = {}               # id -> energia por segundo (para zoom en los picos)
 ENCODER = {"name": None, "ready": False}
 HAS_ASS = [False]
-UPDATE = {"state": "idle", "available": False, "version": "", "url": ""}
+UPDATE = {"state": "idle", "available": False, "version": "", "url": "",
+          "dl": "idle", "pct": 0, "msg": ""}
+UPDATE_PREFIX = "https://github.com/Y4ll/Clipper/"
 
 FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -1854,19 +1856,45 @@ def check_update():
 
 
 def install_update():
-    """Baja el instalador nuevo, lo abre y cierra Clipper para poder reemplazarlo."""
+    """Empieza a bajar el instalador nuevo en segundo plano. Devuelve True si arranco."""
     url = UPDATE.get("url", "")
-    if not IS_WIN or not url.startswith("https://github.com/Y4ll/Clipper/"):
+    if not IS_WIN or not url.startswith(UPDATE_PREFIX):
         return False
+    if UPDATE["dl"] in ("downloading", "launching"):
+        return True
+    UPDATE.update(dl="downloading", pct=0, msg="Conectando...")
+    threading.Thread(target=_download_update, args=(url,), daemon=True).start()
+    return True
+
+
+def _download_update(url):
     dest = Path(tempfile.gettempdir()) / "ClipperSetup.exe"
-    with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
-        shutil.copyfileobj(r, f)
-    if dest.stat().st_size < 1000000 or dest.read_bytes()[:2] != b"MZ":
-        return False
+    part = dest.with_suffix(".part")
+    try:
+        with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            got, last = 0, time.time()
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total and time.time() - last > 0.3:
+                    last = time.time()
+                    UPDATE.update(pct=int(got * 100 / total),
+                                  msg=f"{got // 1048576} de {total // 1048576} MB")
+        if part.stat().st_size < 1000000 or part.read_bytes()[:2] != b"MZ":
+            raise RuntimeError("El archivo bajado no es un instalador valido.")
+        part.replace(dest)
+    except Exception as e:  # noqa: BLE001
+        part.unlink(missing_ok=True)
+        UPDATE.update(dl="error", msg=str(e)[:150] or "No se pudo bajar la actualizacion.")
+        return
+    UPDATE.update(dl="launching", pct=100, msg="Abriendo el instalador...")
     subprocess.Popen([str(dest)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
     threading.Timer(1.5, lambda: os._exit(0)).start()
-    return True
 
 
 # ---------------------------------------------------------------------- web

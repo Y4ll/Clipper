@@ -443,8 +443,15 @@ async function checkUpd(){
     if(u.available){$("#bannerText").textContent="Hay una versión nueva de Clipper ("+u.version+").";$("#banner").classList.add("show")}
     else if(u.state!=="done")setTimeout(checkUpd,3000)}catch(e){}
 }
-$("#btnUpd").onclick=async()=>{$("#btnUpd").disabled=true;$("#bannerText").textContent="Descargando la actualización…";
-  const r=await post("/update/install");if(!r.ok){$("#bannerText").textContent="No se pudo actualizar. Baja el instalador desde la página del proyecto.";$("#btnUpd").disabled=false}};
+$("#btnUpd").onclick=async()=>{$("#btnUpd").disabled=true;$("#bannerText").textContent="Descargando la actualización… 0%";
+  const r=await post("/update/install");
+  const fail=m=>{$("#bannerText").textContent=m||"No se pudo actualizar. Baja el instalador desde la página del proyecto.";$("#btnUpd").disabled=false};
+  if(!r.ok){fail();return}
+  const t=setInterval(async()=>{
+    let d;try{d=await (await API("/update")).json()}catch(e){return}   // si la app ya se cerró para instalar, no pasa nada
+    if(d.dl==="error"){clearInterval(t);fail("No se pudo bajar la actualización: "+d.msg+". Puedes bajar el instalador desde la página del proyecto.")}
+    else if(d.dl==="launching"){clearInterval(t);$("#bannerText").textContent="Abriendo el instalador… Clipper se cerrará solo."}
+    else $("#bannerText").textContent="Descargando la actualización… "+d.pct+"% "+(d.msg?("("+d.msg+")"):"")}, 500)};
 
 /* ---------- cola de videos ---------- */
 const JOBS={};
