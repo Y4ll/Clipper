@@ -102,7 +102,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -765,6 +765,10 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
         state["g"] += (f";color=c=0xF5C400:s=1080x14:r=30[bar];[{state['last']}][bar]"
                        f"overlay=x='-1080+1080*t/{length:.2f}':y=1730:shortest=1[{new}]")
         state["last"] = new
+    if o.get("part_label"):   # etiqueta fija arriba a la izquierda: PARTE 1/3
+        ff = f"fontfile='{ff_escape(font)}':" if font else ""
+        stage(f"drawtext=textfile={pre}part.txt:expansion=none:{ff}fontsize=64:fontcolor=0xF5C400:"
+              "borderw=6:bordercolor=black:x=60:y=150")
     size = {"s": 64, "m": 84, "l": 108}[o["text_size"]]
     color = "0xF5C400" if o["text_color"] == "yellow" else "white"
     ypos = {"top": "h*0.10", "center": "(h-text_h)/2", "bottom": "h*0.74"}[o["text_pos"]]
@@ -870,6 +874,7 @@ def clean_opts(raw, seg_len=120):
         "ai_title": bool(raw.get("ai_title")), "punch": bool(raw.get("punch")),
         "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean"), "karaoke"),
         "sub_translate": bool(raw.get("sub_translate")),
+        "parts": bool(raw.get("parts")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
         "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
         "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
@@ -1097,6 +1102,18 @@ def render_job(job_id, video, segments, o):
             except OSError:
                 out_dir = None
                 job["warnings"].append("No se pudo usar la carpeta de guardado.")
+        if o["parts"]:   # un momento largo se corta en partes seguidas: PARTE 1/3, 2/3...
+            expanded = []
+            for sg in segments:
+                n = max(1, round(sg["len"] / max(8, o["part_len"])))
+                if n == 1:
+                    expanded.append(sg)
+                    continue
+                each = round(sg["len"] / n, 1)
+                for k in range(n):
+                    expanded.append(dict(sg, start=round(sg["start"] + k * each, 1), len=each,
+                                         part=(k + 1, n)))
+            segments = expanded[:60]
         total = len(segments)
         fracs = [0.0] * total
         results = [None] * total
@@ -1154,6 +1171,9 @@ def render_job(job_id, video, segments, o):
                 except Exception as e:  # noqa: BLE001
                     warn(str(e)[:120])
             oc = dict(o)
+            if seg.get("part"):
+                oc["part_label"] = f"PARTE {seg['part'][0]}/{seg['part'][1]}"
+                (jdir / f"{pre}part.txt").write_text(oc["part_label"], encoding="utf-8")
             if ai and not o["texts"]:
                 oc["texts"] = [{"text": ai["title"], "start": 0.3, "end": min(4.0, out_len)}]
             wrap_w = {"s": 20, "m": 16, "l": 12}[o["text_size"]]
@@ -1220,7 +1240,8 @@ def render_job(job_id, video, segments, o):
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
                                   "len": round(out_len), "saved": saved,
                                   "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", []),
-                                  "points": seg.get("points", 0)}
+                                  "points": seg.get("points", 0),
+                                  "part": list(seg["part"]) if seg.get("part") else None}
                 report()
 
         cpus = os.cpu_count() or 2
@@ -1250,7 +1271,7 @@ def render_job(job_id, video, segments, o):
         if real:
             raise real[0]
         job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"],
-                         "title": r["title"], "tags": r["tags"], "points": r["points"]}
+                         "title": r["title"], "tags": r["tags"], "points": r["points"], "part": r["part"]}
                         for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
@@ -1279,7 +1300,7 @@ def queue_local_file(path):
     shutil.copyfile(src, dest)
     st = load_settings()
     want = int(clean_num(st.get("n"), 1, 40, 5))
-    seg = int(clean_num(st.get("len"), 3, 120, 30))
+    seg = int(clean_num(st.get("len"), 3, 600, 30))
     lang = st.get("sub_lang") if st.get("sub_lang") in ("es", "en", "auto") else "es"
     smart = {"lang": lang} if st.get("smart") else None
     threading.Thread(target=analyze_job,
@@ -1527,7 +1548,7 @@ class Handler(BaseHTTPRequestHandler):
                 return
             job_id = new_job("video")
             want = int(clean_num(body.get("n"), 1, 40, 5))
-            length = int(clean_num(body.get("len"), 3, 120, 30))
+            length = int(clean_num(body.get("len"), 3, 600, 30))
             a = clean_num(body.get("from_min"), 0, 2000, 0) * 60
             b = clean_num(body.get("to_min"), 0, 2000, 0) * 60
             last = clean_num(body.get("last_min"), 0, 2000, 0)
@@ -1647,7 +1668,7 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"ok": True, "name": dest.name})
             return
         want = int(clean_num(q.get("n", ["5"])[0], 1, 40, 5))
-        seg = int(clean_num(q.get("len", ["30"])[0], 3, 120, 30))
+        seg = int(clean_num(q.get("len", ["30"])[0], 3, 600, 30))
         lang = q.get("lang", ["es"])[0]
         smart = {"lang": lang if lang in ("es", "en", "auto") else "es"} \
             if q.get("smart", ["0"])[0] == "1" else None
@@ -1673,7 +1694,7 @@ class Handler(BaseHTTPRequestHandler):
         for s in (body.get("segments") or [])[:40]:
             try:
                 start = max(0.0, float(s.get("start")))
-                length = max(3.0, min(120.0, float(s.get("len"))))
+                length = max(3.0, min(600.0, float(s.get("len"))))
             except (TypeError, ValueError, AttributeError):
                 continue
             if job["duration"] and start >= job["duration"]:
