@@ -1,3 +1,0 @@
-#!/bin/sh
-while [ $# -gt 0 ]; do case $1 in -of) OF=$2;; esac; shift; done
-printf '1\n00:00:01,000 --> 00:00:02,000\nno\n\n2\n00:00:02,000 --> 00:00:03,000\npuede\n\n3\n00:00:03,000 --> 00:00:04,000\nser dios mio miren esto\n' > "$OF.srt"
