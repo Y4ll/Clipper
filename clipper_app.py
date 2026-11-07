@@ -21,6 +21,8 @@ Uso:
 
 import argparse
 import array
+import base64
+import hashlib
 import importlib.util
 import json
 import math
@@ -35,12 +37,14 @@ import tempfile
 import textwrap
 import threading
 import time
+import urllib.error
+import urllib.parse
 import urllib.request
 import uuid
 import wave
 import webbrowser
 from collections import deque
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -102,7 +106,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -210,6 +214,185 @@ def streamers_view():
                         job_id=st.get("job_id") if monitor_job_active(st.get("job_id")) else None,
                         last_check=st.get("last_check")))
     return out
+
+
+# ------------------------------------------------- subida a YouTube (API oficial)
+YT_FILE = DATA_DIR / "youtube.json"      # client_id, client_secret y refresh_token: nunca van a la pagina
+YT_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+YT_TOKEN_URL = "https://oauth2.googleapis.com/token"
+YT_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
+YT_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+YT_MAX_PER_DAY = 10        # tope propio: evita spam y que te marquen la cuenta
+YT_AUTH = {"status": "idle", "msg": ""}
+YT_TOKEN = {"value": "", "exp": 0.0}
+YT_LOCK = threading.Lock()
+YT_SENT = []               # momentos de las subidas de las ultimas 24 h
+
+
+def yt_load():
+    try:
+        data = json.loads(YT_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def yt_save(data):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    YT_FILE.write_text(json.dumps(data), encoding="utf-8")
+    try:
+        os.chmod(YT_FILE, 0o600)
+    except OSError:
+        pass
+
+
+def yt_connected():
+    return bool(yt_load().get("refresh_token"))
+
+
+def yt_post_form(url, fields):
+    req = urllib.request.Request(url, data=urllib.parse.urlencode(fields).encode(), method="POST",
+                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
+    try:
+        with urllib.request.urlopen(req, timeout=30) as r:
+            return json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            body = json.loads(e.read())
+            msg = body.get("error_description") or str(body.get("error"))
+        except Exception:  # noqa: BLE001
+            msg = f"HTTP {e.code}"
+        raise RuntimeError(msg)
+
+
+def yt_access_token():
+    cfg = yt_load()
+    if YT_TOKEN["value"] and time.time() < YT_TOKEN["exp"] - 60:
+        return YT_TOKEN["value"]
+    if not cfg.get("refresh_token"):
+        raise RuntimeError("YouTube no esta conectado.")
+    r = yt_post_form(YT_TOKEN_URL, {"client_id": cfg.get("client_id", ""),
+                                    "client_secret": cfg.get("client_secret", ""),
+                                    "refresh_token": cfg["refresh_token"], "grant_type": "refresh_token"})
+    YT_TOKEN.update(value=r["access_token"], exp=time.time() + float(r.get("expires_in", 3000)))
+    return YT_TOKEN["value"]
+
+
+def yt_connect_start():
+    """Abre el permiso de Google en el navegador y espera la respuesta en 127.0.0.1 (flujo oficial de apps de escritorio)."""
+    cfg = yt_load()
+    if not cfg.get("client_id") or not cfg.get("client_secret"):
+        raise ValueError("Primero guarda el ID de cliente y el secreto de Google.")
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(12)
+    result = {}
+
+    class CB(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            q = parse_qs(urlparse(self.path).query)
+            if q.get("state", [""])[0] == state and (q.get("code") or q.get("error")):
+                result.update(code=q.get("code", [""])[0], error=q.get("error", [""])[0])
+                text = "Listo. Ya puedes cerrar esta pestaña y volver a Clipper."
+            else:
+                text = "Respuesta no valida."
+            data = f"<meta charset='utf-8'><body style='font-family:sans-serif;background:#111;color:#fc0;padding:40px'>{text}".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = HTTPServer(("127.0.0.1", 0), CB)
+    srv.timeout = 5
+    redirect = f"http://127.0.0.1:{srv.server_address[1]}"
+    url = YT_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id": cfg["client_id"], "redirect_uri": redirect, "response_type": "code",
+        "scope": YT_SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
+        "code_challenge": challenge, "code_challenge_method": "S256"})
+    YT_AUTH.update(status="waiting", msg="Esperando tu permiso en el navegador...")
+
+    def wait():
+        end = time.time() + 300
+        try:
+            while not result and time.time() < end:
+                srv.handle_request()
+            if not result.get("code"):
+                YT_AUTH.update(status="error", msg="No se dio el permiso (o se acabo el tiempo).")
+                return
+            r = yt_post_form(YT_TOKEN_URL, {"code": result["code"], "client_id": cfg["client_id"],
+                                            "client_secret": cfg["client_secret"], "redirect_uri": redirect,
+                                            "grant_type": "authorization_code", "code_verifier": verifier})
+            if not r.get("refresh_token"):
+                raise RuntimeError("Google no devolvio permiso permanente. Vuelve a conectar.")
+            cfg2 = yt_load()
+            cfg2["refresh_token"] = r["refresh_token"]
+            yt_save(cfg2)
+            YT_TOKEN.update(value=r.get("access_token", ""), exp=time.time() + float(r.get("expires_in", 3000)))
+            YT_AUTH.update(status="ok", msg="Conectado")
+        except Exception as e:  # noqa: BLE001
+            YT_AUTH.update(status="error", msg=str(e)[:200])
+        finally:
+            srv.server_close()
+
+    threading.Thread(target=wait, daemon=True).start()
+    return url
+
+
+def yt_upload_file(path, title, desc, tags, privacy):
+    tok = yt_access_token()
+    meta = {"snippet": {"title": title[:100], "description": desc[:4900], "tags": tags[:10],
+                        "categoryId": "22"},
+            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
+    size = Path(path).stat().st_size
+    init = urllib.request.Request(
+        YT_UPLOAD_URL + "?uploadType=resumable&part=snippet,status",
+        data=json.dumps(meta).encode("utf-8"), method="POST",
+        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8",
+                 "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)})
+    try:
+        with urllib.request.urlopen(init, timeout=60) as r:
+            loc = r.headers["Location"]
+        with open(path, "rb") as f:
+            put = urllib.request.Request(loc, data=f, method="PUT",
+                                         headers={"Content-Length": str(size), "Content-Type": "video/mp4"})
+            with urllib.request.urlopen(put, timeout=900) as r:
+                return json.load(r)["id"]
+    except urllib.error.HTTPError as e:
+        try:
+            msg = json.loads(e.read())["error"]["errors"][0].get("reason") or f"HTTP {e.code}"
+        except Exception:  # noqa: BLE001
+            msg = f"HTTP {e.code}"
+        raise RuntimeError(msg)
+
+
+def yt_upload_clips(job_id, clips, privacy):
+    """Sube los clips terminados de un lote, de uno en uno, con tope diario propio."""
+    job, jdir = JOBS[job_id], WORK / job_id
+    privacy = privacy if privacy in ("private", "unlisted", "public") else "private"
+    for n, c in enumerate(clips, 1):
+        with YT_LOCK:
+            now = time.time()
+            YT_SENT[:] = [t for t in YT_SENT if now - t < 86400]
+            if len(YT_SENT) >= YT_MAX_PER_DAY:
+                job["warnings"].append(f"YouTube: tope de {YT_MAX_PER_DAY} subidas por dia; este clip no se subio.")
+                continue
+            f = jdir / c["name"]
+            title = (str(c.get("title") or "").strip() or f"{str(job.get('name') or 'Clip')[:70]} ({n})") + " #Shorts"
+            tags = c.get("tags") or []
+            tags = [t.strip("# ") for t in (tags.split() if isinstance(tags, str) else tags)
+                    if isinstance(t, str) and t.strip("# ")]
+            desc = (str(c.get("desc") or "").strip() + "\n\n#Shorts " +
+                    " ".join("#" + t for t in tags[:3])).strip()
+            try:
+                vid = yt_upload_file(f, title, desc, tags, privacy)
+                YT_SENT.append(time.time())
+                job["warnings"].append(f"Subido a YouTube ({privacy}): https://youtu.be/{vid}")
+            except Exception as e:  # noqa: BLE001
+                job["warnings"].append("YouTube: no se pudo subir un clip (" + str(e)[:120] + ")")
 
 
 def read_build():
@@ -1060,6 +1243,8 @@ def clean_opts(raw, seg_len=120):
         "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
         "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
+        "yt_upload": bool(raw.get("yt_upload")),
+        "yt_privacy": pick("yt_privacy", ("private", "unlisted", "public"), "private"),
     }
 
 
@@ -1284,6 +1469,7 @@ def auto_render(job_id, video, moments):
     """Lote de un directo: corta los clips solo con los ajustes guardados y los guarda en la carpeta elegida."""
     cfg = dict(load_settings())
     cfg["autosave"] = True      # si hay carpeta de salida, se guardan ahi; si no, quedan para descargar
+    cfg["yt_upload"] = bool(cfg.get("yt_auto")) and yt_connected()
     o = clean_opts(cfg)
     segs = [{"start": round(float(m["start"]), 1), "len": round(float(m.get("len") or 30), 1),
              "points": int(m.get("points") or 0)} for m in moments[:40]]
@@ -1589,6 +1775,9 @@ def render_job(job_id, video, segments, o):
                         for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
+        if o.get("yt_upload") and job["clips"]:
+            threading.Thread(target=yt_upload_clips, args=(job_id, list(job["clips"]), o["yt_privacy"]),
+                             daemon=True).start()
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
@@ -1814,6 +2003,12 @@ class Handler(BaseHTTPRequestHandler):
                         "gemini": bool(get_gemini_key())})
         elif u.path == "/streamers":
             self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
+        elif u.path == "/youtube":
+            cfg, st = yt_load(), load_settings()
+            self._json({"configured": bool(cfg.get("client_id") and cfg.get("client_secret")),
+                        "connected": bool(cfg.get("refresh_token")), "auth": dict(YT_AUTH),
+                        "auto": bool(st.get("yt_auto")), "privacy": st.get("yt_privacy") or "private",
+                        "max_per_day": YT_MAX_PER_DAY})
         elif u.path == "/settings":
             self._json(load_settings())
         elif u.path == "/assets":
@@ -1882,6 +2077,28 @@ class Handler(BaseHTTPRequestHandler):
                              args=(job_id, None, url, want, length, rng, smart, snap),
                              daemon=True).start()
             self._json({"id": job_id})
+        elif u.path == "/youtube/config":
+            body = self._body_json() or {}
+            cid, sec = str(body.get("client_id") or "").strip(), str(body.get("client_secret") or "").strip()
+            if not re.fullmatch(r"[\w.\-]{10,200}", cid) or not re.fullmatch(r"[\w.\-]{10,200}", sec):
+                self._json({"error": "El ID de cliente o el secreto no tienen el formato de Google."}, 400)
+                return
+            cfg = yt_load()
+            if cfg.get("client_id") != cid:
+                cfg.pop("refresh_token", None)
+            cfg.update(client_id=cid, client_secret=sec)
+            yt_save(cfg)
+            self._json({"ok": True})
+        elif u.path == "/youtube/connect":
+            try:
+                self._json({"url": yt_connect_start()})
+            except ValueError as e:
+                self._json({"error": str(e)}, 400)
+        elif u.path == "/youtube/disconnect":
+            YT_FILE.unlink(missing_ok=True)
+            YT_TOKEN.update(value="", exp=0.0)
+            YT_AUTH.update(status="idle", msg="")
+            self._json({"ok": True})
         elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete"):
             body = self._body_json() or {}
             items = load_streamers()

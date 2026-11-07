@@ -27,9 +27,10 @@ Requisitos: Windows 10/11 de 64 bits, 4 GB de RAM (8 GB mejor). Clipper abre su 
 - **Que la IA elija los momentos (opcional):** con tu clave de Gemini, la IA reordena los mejores candidatos. Solo se envían tiempos y notas de volumen, nunca el video.
 - **Clips automáticos en directo:** al pegar un directo, activa «Sacar clips automáticamente mientras graba».
 - **Monitor de directos:** añade canales (usuario o link de Kick) y Clipper los revisa cada 2 minutos; si uno entra en vivo, graba hasta 60 min y saca clips solo. Clipper tiene que estar abierto.
+- **Subir a YouTube Shorts (opcional):** conecta tu cuenta con la API oficial de Google (ID de cliente de OAuth tipo «App de escritorio», una sola vez). Los clips de directos se suben solos, con visibilidad a tu elección (por defecto privado) y máximo 10 al día. TikTok e Instagram no se pueden desde una app local: sus APIs exigen auditoría, un sitio web propio o una URL pública del video.
 
 ### Dónde se guardan tus cosas
-Ajustes, lista de canales del monitor (`streamers.json`), logo y video de relleno: `%APPDATA%\Clipper`. Los clips y videos temporales se borran al cerrar la app.
+Ajustes, lista de canales del monitor (`streamers.json`), conexión de YouTube (`youtube.json`), logo y video de relleno: `%APPDATA%\Clipper`. Los clips y videos temporales se borran al cerrar la app.
 
 ## Actualizaciones
 Clipper avisa cuando hay una versión nueva y la instala con un clic.

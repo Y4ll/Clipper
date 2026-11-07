@@ -136,6 +136,17 @@ details.card[open]>summary{margin-bottom:14px}
     <div id="monList" style="margin-top:8px"></div>
   </details>
 
+  <details class="card" id="ytCard">
+    <summary class="label" style="cursor:pointer">Subir a YouTube Shorts <span class="note" id="ytState"></span></summary>
+    <p class="note">Usa la API oficial de Google con tu cuenta. Una sola vez: en console.cloud.google.com crea un proyecto, activa «YouTube Data API v3» y crea una credencial «ID de cliente de OAuth» tipo <b>App de escritorio</b>; pega aquí el ID y el secreto.</p>
+    <div class="grid" style="margin-top:8px"><input type="text" id="ytId" placeholder="ID de cliente" autocomplete="off"><input type="password" id="ytSecret" placeholder="Secreto de cliente" autocomplete="off"></div>
+    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="ytSave">Guardar</button><button class="btn sm go" id="ytConnect" style="font-size:14px">Conectar con Google</button><button class="btn sm danger hidden" id="ytOff">Desconectar</button></div>
+    <p class="note" id="ytMsg"></p>
+    <label class="tog" style="margin-top:8px"><input type="checkbox" id="yt_auto"><span>Subir solos los clips de directos<small>Solo los clips que salen de «clips automáticos» y del monitor. Máximo 10 al día.</small></span></label>
+    <div class="field" style="margin-top:8px"><label>Visibilidad al subir</label><select id="yt_privacy"><option value="private">Privado (recomendado para probar)</option><option value="unlisted">No listado</option><option value="public">Público</option></select></div>
+    <p class="note">Subir muchos clips repetidos de un mismo streamer puede hacer que YouTube marque el canal. Usa solo contenido tuyo o con permiso.</p>
+  </details>
+
   <div class="card">
     <p class="label">2 · Formato</p>
     <div class="field"><label>Preajuste de un clic</label>
@@ -350,6 +361,28 @@ async function loadCaps(){
   if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
 }
+/* ---------- YouTube ---------- */
+let YTPOLL=null;
+async function loadYoutube(){
+  let d;try{d=await (await API("/youtube")).json()}catch(e){return}
+  $("#ytState").textContent=d.connected?"· conectado":"";
+  $("#ytConnect").classList.toggle("hidden",d.connected);$("#ytOff").classList.toggle("hidden",!d.connected);
+  $("#ytConnect").disabled=!d.configured;$("#yt_auto").disabled=!d.connected;
+  $("#yt_auto").checked=!!d.auto&&d.connected;$("#yt_privacy").value=d.privacy;
+  if(d.auth.msg)$("#ytMsg").textContent=d.auth.msg;
+  if(d.connected&&YTPOLL){clearInterval(YTPOLL);YTPOLL=null}
+}
+$("#ytSave").onclick=async()=>{
+  const r=await post("/youtube/config",{client_id:$("#ytId").value.trim(),client_secret:$("#ytSecret").value.trim()});
+  if(r.error){alert(r.error);return}
+  $("#ytSecret").value="";$("#ytMsg").textContent="Guardado. Ahora pulsa «Conectar con Google».";loadYoutube()};
+$("#ytConnect").onclick=async()=>{
+  const r=await post("/youtube/connect");if(r.error){alert(r.error);return}
+  window.open(r.url,"_blank");$("#ytMsg").textContent="Esperando tu permiso en el navegador…";
+  if(!YTPOLL)YTPOLL=setInterval(loadYoutube,2000)};
+$("#ytOff").onclick=async()=>{await post("/youtube/disconnect");$("#ytMsg").textContent="";loadYoutube()};
+$("#yt_auto").onchange=e=>{S.yt_auto=e.target.checked;persist()};
+$("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
 /* ---------- monitor de directos ---------- */
 const MON_SEEN=new Set();
 async function loadMonitor(){
@@ -569,7 +602,7 @@ function showClips(J,d){
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s)}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);loadYoutube();
   if(!S.intro_seen)$("#intro").style.display="block";
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
