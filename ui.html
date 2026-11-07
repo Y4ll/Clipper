@@ -125,7 +125,7 @@ details.card[open]>summary{margin-bottom:14px}
       <div class="field"><label>Solo los últimos (minutos) · en directo: cuánto grabar</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
       <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
     </div>
-    <label class="tog" style="margin-top:8px"><input type="checkbox" id="live_clips"><span>Sacar clips automáticamente mientras graba<small>Solo funciona en directos. Cada 5 minutos analiza lo grabado y saca clips sin parar la grabación.</small></span></label>
+    <label class="tog" style="margin-top:8px"><input type="checkbox" id="live_clips"><span>Sacar clips automáticamente mientras graba<small>Solo funciona en directos. Cada 3 minutos analiza lo nuevo y corta los mejores momentos solos (hasta 4 h). Hay un botón «Clip ya» para guardar los últimos segundos al instante y saca clips sin parar la grabación.</small></span></label>
     <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo, graba hasta 10 minutos (o los que pongas) y puedes parar cuando quieras con «Analizar lo grabado ya». Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
   </div>
 
@@ -457,12 +457,13 @@ $("#btnUpd").onclick=async()=>{$("#btnUpd").disabled=true;$("#bannerText").textC
 const JOBS={};
 function addJobCard(id,name){
   const el=document.createElement("div");el.className="job";el.id="job"+id;
-  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm stoplive hidden">Analizar lo grabado ya</button><button class="btn sm danger cancel">Cancelar</button></div>
+  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm clipnow hidden">Clip ya</button><button class="btn sm stoplive hidden">Analizar lo grabado ya</button><button class="btn sm danger cancel">Cancelar</button></div>
   <div class="bar"><i></i></div><div class="msg"></div><div class="body"></div>`;
   $("#jobs").prepend(el);
   JOBS[id]={id,el,name,state:"",segs:null,rendered:false,view:null};
   el.querySelector(".cancel").onclick=()=>post("/cancel?id="+id);
   el.querySelector(".stoplive").onclick=()=>post("/stoplive?id="+id);
+  el.querySelector(".clipnow").onclick=async()=>{const r=await post("/clipnow?id="+id);if(r.error)alert(r.error)};
   poll(id);
 }
 function upload(file){
@@ -509,6 +510,8 @@ function update(J,d){
   el.querySelector(".bar i").style.width=(d.state==="ready"?100:d.pct)+"%";
   const m=el.querySelector(".msg");m.textContent=d.msg;m.classList.toggle("err",d.state==="error");
   el.querySelector(".stoplive").classList.toggle("hidden",!d.live);
+  el.querySelector(".stoplive").textContent=d._live_opts?"Parar de grabar":"Analizar lo grabado ya";
+  el.querySelector(".clipnow").classList.toggle("hidden",!(d.live&&d._live_opts));
   el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
   (d.children||[]).forEach(cid=>{if(!MON_SEEN.has(cid)){MON_SEEN.add(cid);addJobCard(cid,"Lote del directo")}});
   if(d.state==="ready"&&d._auto_render&&J.view!=="ready"){J.view="ready";J.waiting=false}   // lote del directo: se corta solo

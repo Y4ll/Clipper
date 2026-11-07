@@ -1359,82 +1359,88 @@ def download_video(job_id, url, jdir, rng=None):
     return max(files, key=lambda f: f.stat().st_size)
 
 
-LIVE_CLIP_EVERY = 5 * 60   # cada cuantos segundos grabados se saca un lote de clips
+LIVE_CLIP_EVERY = 3 * 60   # cada cuantos segundos grabados se analiza un tramo nuevo
+LIVE_MIN_POINTS = 35       # nota minima para que un momento de un directo se corte solo
+LIVE_MAX_SPAN = 30 * 60    # un tramo nunca analiza mas de 30 min de una vez
+
+
+def _frag_cut(src, dst, start, dur):
+    """Copia un tramo del directo que se esta grabando (sin tocar el archivo principal)."""
+    try:
+        subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.2f}",
+                        "-i", str(src), "-t", f"{dur:.2f}", "-c", "copy", str(dst)],
+                       stdin=subprocess.DEVNULL, timeout=180, creationflags=NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        return False
+    return dst.is_file() and dst.stat().st_size > 10000
+
+
+def spawn_live_child(parent_id, out, seg_start, seg_dur, opts, direct=False):
+    """Crea un lote hijo con un tramo del directo. direct=True: se corta entero (boton 'Clip ya')."""
+    import datetime
+    ts = datetime.datetime.now().strftime("%H:%M")
+    child_id = new_job(f"{opts['name'][:40]} · {'Clip ya' if direct else 'tramo'} {ts}")
+    child = JOBS[child_id]
+    child.update(_auto_render=True, _live_parent=parent_id, _abs_offset=float(seg_start),
+                 _direct=bool(direct))
+    JOBS[parent_id].setdefault("children", []).append(child_id)
+    jdir = WORK / child_id
+    frag = jdir / "input.mp4"
+    if not _frag_cut(out, frag, seg_start, seg_dur):
+        child.update(state="error", msg="No se pudo cortar ese tramo del directo.")
+        return child_id
+    if direct:
+        child.update(state="ready", msg="Cortando el clip...", pct=100,
+                     duration=seg_dur, moments=[{"start": 0, "len": round(seg_dur), "points": 0}])
+        auto_render(child_id, frag, child["moments"])
+        return child_id
+    threading.Thread(target=analyze_job,
+                     args=(child_id, frag, None, opts["want"], opts["length"], None,
+                           opts["smart"], opts["snap"]), daemon=True).start()
+    return child_id
 
 
 def _live_clipper(job_id, out, state, opts):
-    """Hilo que saca clips cada LIVE_CLIP_EVERY segundos mientras se graba el directo.
+    """Mientras se graba el directo, analiza cada tramo nuevo y corta los mejores momentos solos.
 
-    Espera a que haya suficiente video grabado, corta un fragmento temporal con ffmpeg
-    (nunca toca el archivo principal) y lanza un analyze_job secundario.
-    Cuando analyze_job termina la UI lo muestra como un job normal aparte.
+    Cada ronda mira desde un poco antes de donde acabo la anterior (para no partir un momento
+    por la mitad) hasta casi el final de lo grabado. Al terminar la grabacion hace una ronda final.
     """
-    want = opts["want"]
-    length = opts["length"]
-    smart = opts["smart"]
-    snap = opts["snap"]
-    base_name = opts["name"]
-    clip_every = max(60, LIVE_CLIP_EVERY)      # minimo 1 min entre lotes
-    min_needed = length * max(2, want // 2)    # segundos minimos grabados para valer la pena
-    last_clip_at = 0.0
-    reported_sec = 0.0
-
+    length = int(opts["length"])
+    clip_every = max(60, LIVE_CLIP_EVERY)
+    min_needed = max(60, length * 2)
+    done_until = 0.0
     while not state["cancel"].is_set():
         time.sleep(2)
-        if state["cancel"].is_set():
+        job = JOBS.get(job_id)
+        if not job:
             break
-        # Seguimos mientras el job padre siga grabando (live=True en su dict)
-        if not JOBS.get(job_id, {}).get("live"):
+        cur = float(job.get("_rec_sec", 0) or 0)
+        rec_done = bool(job.get("_rec_done"))
+        due = cur >= min_needed and cur - done_until >= clip_every
+        final = rec_done and cur - done_until >= 20
+        if rec_done and not final:
             break
-        try:
-            cur_sec = float(JOBS[job_id].get("_rec_sec", 0))
-        except (KeyError, TypeError, ValueError):
+        if not (due or final):
             continue
-        if cur_sec < min_needed:
+        sec_end = max(0.0, cur - 2)
+        sec_start = max(0.0, done_until - length)
+        if sec_end - sec_start > LIVE_MAX_SPAN:
+            sec_start = sec_end - LIVE_MAX_SPAN
+        if sec_end - sec_start < 15:
             continue
-        if cur_sec - last_clip_at < clip_every:
-            continue
-
-        # Cuanto video queremos analizar: lo que cabe en el lote actual
-        seg_dur = int(min(cur_sec, length * want * 1.5))
-        seg_start = max(0.0, cur_sec - seg_dur)
-
-        # Crear job hijo antes de copiar para que aparezca en la UI
-        import datetime
-        ts = datetime.datetime.now().strftime("%H:%M")
-        child_name = f"{base_name[:40]} · {ts}"
-        child_id = new_job(child_name)
-        JOBS[child_id]["_auto_render"] = bool(opts.get("auto_render"))
-        JOBS[job_id].setdefault("children", []).append(child_id)
-        child_jdir = WORK / child_id
-        child_jdir.mkdir(parents=True, exist_ok=True)
-        frag = child_jdir / "input.mp4"
-
-        # Copiar el fragmento con re-encode minimo para que el mp4 sea autocontenido
-        try:
-            subprocess.run(
-                [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
-                 "-ss", str(seg_start), "-i", str(out),
-                 "-t", str(seg_dur), "-c", "copy", str(frag)],
-                timeout=120, creationflags=NO_WINDOW)
-        except Exception:  # noqa: BLE001
-            JOBS[child_id].update(state="error", msg="No se pudo cortar el fragmento del directo.")
-            continue
-
-        if not frag.is_file() or frag.stat().st_size < 10000:
-            JOBS[child_id].update(state="error", msg="Fragmento del directo vacio.")
-            continue
-
-        last_clip_at = cur_sec
-        threading.Thread(target=analyze_job,
-                         args=(child_id, frag, None, want, length, None, smart, snap),
-                         daemon=True).start()
+        spawn_live_child(job_id, out, sec_start, sec_end - sec_start, opts)
+        done_until = sec_end
+        if final:
+            break
 
 
 def record_live(job_id, meta, jdir, rng, live_opts=None):
-    """Directo: graba lo que haya disponible (hasta N minutos) y se puede parar cuando quieras."""
+    """Directo: graba lo que haya disponible y se puede parar cuando quieras.
+    Con clipeo automatico graba hasta 4 horas (o los minutos que pongas)."""
     job, state = JOBS[job_id], rt(job_id)
-    cap = int((rng[2] if rng and rng[2] else 0) or 10)     # minutos como maximo
+    given = int((rng[2] if rng and rng[2] else 0) or 0)
+    cap = given or (240 if live_opts else 10)     # minutos como maximo
     stream = meta.get("url")
     headers = dict(meta.get("http_headers") or {})
     if not stream:
@@ -1445,23 +1451,23 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     if not stream:
         raise RuntimeError("No pude abrir el directo.")
     out = jdir / "input.mp4"
-    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
-    if headers:
-        cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
-    if ".m3u8" in stream and not job.get("_live_edge"):
-        cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
-    cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy",
-            "-movflags", "frag_keyframe+empty_moov", str(out)]
-    job.update(live=True, msg="Grabando el directo...", pct=5)
     title = (str(meta.get("title") or "directo"))[:80]
+    job.update(live=True, msg="Grabando el directo...", pct=5)
     job["name"] = title + ".mp4"
+    job["_rec_sec"] = 0.0
 
-    # Lanzar hilo de clipeo automatico si se pidio
-    if live_opts:
-        live_opts["name"] = title
-        threading.Thread(target=_live_clipper,
-                         args=(job_id, out, state, live_opts),
-                         daemon=True).start()
+    def build(bsf):
+        cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
+        if headers:
+            cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
+        if stream.startswith("http"):   # si se corta la red un momento, reintenta
+            cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
+        if ".m3u8" in stream and not job.get("_live_edge"):
+            cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
+        cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy"]
+        if bsf:   # el audio AAC de los directos HLS necesita esto para entrar en un mp4
+            cmd += ["-bsf:a", "aac_adtstoasc"]
+        return cmd + ["-movflags", "frag_keyframe+empty_moov", str(out)]
 
     def on_line(line):
         if line.startswith("out_time_us="):
@@ -1470,25 +1476,40 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             except ValueError:
                 return
             job["_rec_sec"] = sec
-            job["msg"] = f"Grabando el directo... {fmt_time(sec)} (maximo {cap} min)"
+            lotes = len(job.get("children", []))
+            extra = f" · {lotes} tramo(s) analizados" if lotes else ""
+            job["msg"] = f"Grabando el directo... {fmt_time(sec)} (maximo {cap} min){extra}"
             job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
 
-    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
-    with state["lock"]:
-        state["procs"].add(p)
-        state["stdin"] = p.stdin
+    started_clipper = False
     tail = deque(maxlen=10)
     try:
-        for raw in p.stdout:
-            line = raw.decode("utf-8", errors="ignore").strip()
-            tail.append(line)
-            on_line(line)
-        p.wait()
+        for attempt, bsf in enumerate((True, False)):
+            p = subprocess.Popen(build(bsf), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                 stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+            with state["lock"]:
+                state["procs"].add(p)
+                state["stdin"] = p.stdin
+            if live_opts and not started_clipper:
+                started_clipper = True
+                live_opts["name"] = title
+                threading.Thread(target=_live_clipper, args=(job_id, out, state, live_opts),
+                                 daemon=True).start()
+            t0 = time.time()
+            try:
+                for raw in p.stdout:
+                    line = raw.decode("utf-8", errors="ignore").strip()
+                    tail.append(line)
+                    on_line(line)
+                p.wait()
+            finally:
+                with state["lock"]:
+                    state["procs"].discard(p)
+                    state["stdin"] = None
+            quick_fail = (time.time() - t0 < 20 and job.get("_rec_sec", 0) < 2)
+            if state["cancel"].is_set() or not (quick_fail and p.returncode):
+                break    # grabo bien (o se paro a proposito); no hace falta reintentar
     finally:
-        with state["lock"]:
-            state["procs"].discard(p)
-            state["stdin"] = None
         job["live"] = False
         job["_rec_done"] = True      # la grabacion termino (el analisis puede seguir)
     if state["cancel"].is_set():
@@ -1501,6 +1522,25 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
 
 def auto_render(job_id, video, moments):
     """Lote de un directo: corta los clips solo con los ajustes guardados y los guarda en la carpeta elegida."""
+    par = JOBS[job_id].get("_live_parent")
+    if par and not JOBS[job_id].get("_direct"):
+        # directo: solo momentos fuertes y que no repitan lo ya cortado en rondas anteriores
+        off = float(JOBS[job_id].get("_abs_offset", 0))
+        pj = JOBS.get(par, {})
+        used = pj.setdefault("_used", [])
+        keep = []
+        for m in sorted(moments, key=lambda m: m.get("points", 0), reverse=True):
+            if m.get("points", 0) < LIVE_MIN_POINTS:
+                continue
+            a_, b_ = off + float(m["start"]), off + float(m["start"]) + float(m.get("len") or 30)
+            dup = any(min(b_, y) - max(a_, x) > 0.3 * (b_ - a_) for x, y in used)
+            if not dup:
+                keep.append(m)
+                used.append((a_, b_))
+        moments = keep
+        if not moments:
+            JOBS[job_id].update(state="done", msg="Sin momentos fuertes en este tramo", pct=100)
+            return
     cfg = dict(load_settings())
     cfg["autosave"] = True      # si hay carpeta de salida, se guardan ahi; si no, quedan para descargar
     cfg["yt_upload"] = bool(cfg.get("yt_auto")) and yt_connected()
@@ -1523,6 +1563,12 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
                                                if k != "live_clips"},
                                      "snap": snap, "auto_render": True}
             video = download_video(job_id, url, jdir, rng)
+            if job.get("_live_opts"):   # los clips ya salieron por tramos; no se re-analiza todo
+                time.sleep(3)           # deja arrancar la ronda final
+                n = len(job.get("children", []))
+                job.update(state="done", pct=100, msg=f"Directo terminado: {n} tramo(s) analizados. "
+                           "Los clips estan en cada lote.")
+                return
         job.update(state="analyzing", msg="Extrayendo el audio...", pct=12)
         duration = probe_duration(video)
         energy = []
@@ -2205,6 +2251,21 @@ class Handler(BaseHTTPRequestHandler):
                         pass
                 if jid in JOBS and JOBS[jid]["state"] in ("ready", "queued"):
                     JOBS[jid].update(state="cancelled", msg="Cancelado")
+            self._json({"ok": True})
+        elif u.path == "/clipnow":
+            jid = q.get("id", [""])[0]
+            pj = JOBS.get(jid)
+            lo = (pj or {}).get("_live_opts")
+            if not pj or not lo or not pj.get("live"):
+                self._json({"error": "Este directo ya no se esta grabando."}, 400)
+                return
+            cur = float(pj.get("_rec_sec", 0) or 0)
+            dur = float(lo["length"])
+            if cur < 8:
+                self._json({"error": "Espera unos segundos: aun no hay video grabado."}, 400)
+                return
+            dur = min(dur, cur - 2)
+            spawn_live_child(jid, WORK / jid / "input.mp4", max(0.0, cur - 2 - dur), dur, lo, direct=True)
             self._json({"ok": True})
         elif u.path == "/stoplive":
             jid = q.get("id", [""])[0]
