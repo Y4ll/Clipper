@@ -117,6 +117,8 @@ MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
 # ------------------------------------------------------- monitor de directos
 STREAMERS_FILE = DATA_DIR / "streamers.json"
 MONITOR_EVERY = 120        # segundos entre revisiones
+MONITOR_SEGMENT_MIN = 60   # cada grabacion dura como maximo esto; si el directo sigue, arranca otra
+MONITOR_MAX_HOURS = 6      # tope por directo para no llenar el disco
 MONITOR = {}               # url -> {live, job_id, last_check, recorded, error}
 MONITOR_LOCK = threading.Lock()
 MONITOR_WAKE = threading.Event()
@@ -167,8 +169,24 @@ def streamer_is_live(url):
 
 
 def monitor_job_active(job_id):
+    """True mientras ese trabajo siga grabando (el analisis posterior ya no cuenta)."""
     job = JOBS.get(job_id or "")
-    return bool(job) and job.get("state") in ("queued", "analyzing", "rendering")
+    return bool(job) and job.get("state") in ("queued", "analyzing", "rendering") \
+        and not job.get("_rec_done")
+
+
+def monitor_start_segment(url, name, st):
+    job_id = new_job(name or url)
+    JOBS[job_id]["monitor"] = True
+    if st.get("segments"):
+        JOBS[job_id]["_live_edge"] = True     # los tramos siguientes empiezan desde ahora, sin repetir
+    with MONITOR_LOCK:
+        st["job_id"] = job_id
+        st["segments"] = st.get("segments", 0) + 1
+    smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
+    threading.Thread(target=analyze_job,
+                     args=(job_id, None, url, 5, 30, (0, None, MONITOR_SEGMENT_MIN), smart, True),
+                     daemon=True).start()
 
 
 def monitor_check_once():
@@ -177,23 +195,35 @@ def monitor_check_once():
             continue
         url = s["url"]
         live = streamer_is_live(url)
+        start = False
         with MONITOR_LOCK:
-            st = MONITOR.setdefault(url, {"live": False, "job_id": None, "recorded": False})
+            st = MONITOR.setdefault(url, {"live": False, "job_id": None})
             st.update(live=live, last_check=time.time())
-            if not live:
-                st["recorded"] = False      # volvio a estar offline: el proximo directo vuelve a grabarse
+            if not live:                    # directo terminado: el proximo vuelve a grabarse desde cero
+                for k in ("session_start", "segments", "fails", "stopped", "note"):
+                    st.pop(k, None)
+                if not monitor_job_active(st["job_id"]):
+                    st["job_id"] = None     # no arrastrar el trabajo del directo anterior
                 continue
-            if st["recorded"] or monitor_job_active(st["job_id"]):
+            if st.get("stopped") or monitor_job_active(st["job_id"]):
                 continue
-            st["recorded"] = True
-        job_id = new_job(s["name"] or url)
-        JOBS[job_id]["monitor"] = True
-        with MONITOR_LOCK:
-            st["job_id"] = job_id
-        smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
-        threading.Thread(target=analyze_job,
-                         args=(job_id, None, url, 5, 30, (0, None, 60), smart, True),
-                         daemon=True).start()
+            prev = JOBS.get(st["job_id"] or "")
+            if prev and prev.get("state") == "cancelled":
+                st.update(stopped=True, note="Parado por ti: no se vuelve a grabar este directo.")
+                continue
+            if prev and prev.get("state") == "error":
+                st["fails"] = st.get("fails", 0) + 1
+                if st["fails"] >= 3:
+                    st.update(stopped=True, note="La grabacion fallo 3 veces seguidas: se dejo de intentar.")
+                    continue
+            now = time.time()
+            st.setdefault("session_start", now)
+            if now - st["session_start"] >= MONITOR_MAX_HOURS * 3600:
+                st.update(stopped=True, note=f"Tope de {MONITOR_MAX_HOURS} horas alcanzado en este directo.")
+                continue
+            start = True
+        if start:
+            monitor_start_segment(url, s["name"], st)
 
 
 def monitor_loop():
@@ -214,7 +244,8 @@ def streamers_view():
         st = mon.get(s["url"], {})
         out.append(dict(s, live=bool(st.get("live")) and s["enabled"],
                         job_id=st.get("job_id") if monitor_job_active(st.get("job_id")) else None,
-                        last_check=st.get("last_check")))
+                        last_check=st.get("last_check"), note=st.get("note") or "",
+                        segments=st.get("segments", 0)))
     return out
 
 
@@ -1417,7 +1448,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
     if headers:
         cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
-    if ".m3u8" in stream:
+    if ".m3u8" in stream and not job.get("_live_edge"):
         cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
     cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy",
             "-movflags", "frag_keyframe+empty_moov", str(out)]
@@ -1459,6 +1490,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             state["procs"].discard(p)
             state["stdin"] = None
         job["live"] = False
+        job["_rec_done"] = True      # la grabacion termino (el analisis puede seguir)
     if state["cancel"].is_set():
         raise Cancelled()
     if not out.is_file() or out.stat().st_size < 10000:

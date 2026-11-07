@@ -392,7 +392,7 @@ async function loadMonitor(){
   box.innerHTML=list.length?"":'<p class="note">Todavía no hay canales.</p>';
   list.forEach(x=>{
     const r=document.createElement("div");r.style.cssText="display:flex;gap:8px;align-items:center;margin:4px 0";
-    r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(x.url)}">${esc(x.name||x.url)} <small class="note">${x.live?"En vivo":(x.enabled?"Offline":"Pausado")}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
+    r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(x.url)}">${esc(x.name||x.url)} <small class="note">${x.live?("En vivo"+(x.segments>1?" · tramo "+x.segments:"")):(x.enabled?"Offline":"Pausado")}${x.note?" · "+esc(x.note):""}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
     r.querySelector(".tg").onclick=async()=>{await post("/streamers/toggle",{url:x.url,enabled:!x.enabled});loadMonitor()};
     r.querySelector(".rm").onclick=async()=>{await post("/streamers/delete",{url:x.url});loadMonitor()};
     box.appendChild(r);
