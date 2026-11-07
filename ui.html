@@ -118,6 +118,9 @@ details.card[open]>summary{margin-bottom:14px}
       <input type="text" id="url" placeholder="…o pega el link de un video (YouTube, etc.)" autocomplete="off">
       <button class="btn" id="btnUrl">Traer</button>
     </div>
+    <div class="field" style="margin-top:10px"><label>Buscar un momento (opcional)</label>
+      <input type="text" id="query" maxlength="80" placeholder="Ej: cuando habla del tráiler, la pelea, el gol…" autocomplete="off">
+      <div class="note" id="queryNote">Escucha los tramos más fuertes y sube los que mencionan esas palabras. Necesita Whisper y tarda más en analizar.</div></div>
     <div class="grid" id="rangeBox" style="margin-top:10px">
       <div class="field"><label>Solo los últimos (minutos) · en directo: cuánto grabar</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
       <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
@@ -222,9 +225,13 @@ details.card[open]>summary{margin-bottom:14px}
     <div class="field" style="margin:10px 0"><label>Título y hashtags con IA (opcional): clave de Gemini</label>
       <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
       <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div></div>
+    <div class="field" style="margin:6px 0"><label>Tono del título</label><div class="chips" id="ai_tone">
+      <button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
     <label class="tog"><input type="checkbox" id="ai_title"><span>Poner título gancho automático<small>Si no escribes tus propios textos, la IA pone uno al inicio del clip y sugiere hashtags</small></span></label>
     <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
     <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
+    <div class="field" style="margin-top:8px"><label>Resolución de salida</label><div class="chips" id="res">
+      <button class="chip" data-v="1080">1080p (mejor)</button><button class="chip" data-v="720">720p (más rápido, pesa menos)</button></div></div>
     <div class="field" style="margin-top:8px"><label>Velocidad</label><div class="chips" id="quality">
       <button class="chip" data-v="fast" title="Menos calidad, mucho más veloz">Rápido</button><button class="chip" data-v="best" title="Se ve mejor, tarda más">Mejor calidad</button></div></div>
     <div class="field" style="margin-top:8px"><label>Fluidez (fps)</label><div class="chips" id="fps">
@@ -251,8 +258,10 @@ const native=()=>!!(window.pywebview&&window.pywebview.api&&window.pywebview.api
 $("#build").textContent=BUILD;
 
 /* ---------- ajustes ---------- */
-const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+let QUERY="";
+const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
+$("#query").oninput=e=>{QUERY=e.target.value.trim()};
 const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
 const PRESETS={tiktok:30,reels:30,shorts:45};
 
@@ -260,10 +269,10 @@ function chips(id,key,cb){
   const box=$("#"+id);
   box.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{
     if(b.disabled)return;
-    const v=b.dataset.v;S[key]=(key==="fps")?Number(v):v;paint();persist();cb&&cb(v)});
+    const v=b.dataset.v;S[key]=(key==="fps"||key==="res")?Number(v):v;paint();persist();cb&&cb(v)});
 }
 function paint(){
-  for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"]])
+  for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     $("#"+id).querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v));
   $("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts"])$("#"+k).checked=!!S[k];
@@ -283,7 +292,7 @@ function paint(){
 }
 chips("preset","preset",v=>{if(PRESETS[v]){S.len=PRESETS[v];paint();persist()}});
 chips("mode","mode");chips("text_pos","text_pos");chips("text_color","text_color");chips("text_size","text_size");
-chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chips("quality","quality");chips("sub_style","sub_style");chips("cam_corner","cam_corner");
+chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chips("quality","quality");chips("sub_style","sub_style");chips("ai_tone","ai_tone");chips("res","res");chips("cam_corner","cam_corner");
 $("#cam_size").oninput=e=>{S.cam_size=+e.target.value;paint();persist()};
 $("#music_vol").oninput=e=>{S.music_vol=+e.target.value;paint();persist()};
 document.querySelectorAll("#partsN .chip").forEach(b=>b.onclick=()=>{S.parts_n=+b.dataset.n;paint();persist()});
@@ -321,7 +330,7 @@ let CAPS={};
 async function loadCaps(){
   try{CAPS=await (await API("/caps")).json()}catch(e){return}
   $("#pSub").textContent=CAPS.whisper?"Subtítulos listos":"Sin subtítulos";$("#pSub").classList.toggle("on",!!CAPS.whisper);
-  if(!CAPS.whisper){$("#smart").disabled=true;$("#smartNote").textContent="No disponible: esta instalación no trae el modelo de voz";$("#subNote").textContent="Esta instalación no trae el modelo de subtítulos";}
+  if(!CAPS.whisper){$("#query").disabled=true;$("#queryNote").textContent="Buscar por lo que se dice no está disponible: esta instalación no trae Whisper.";$("#smart").disabled=true;$("#smartNote").textContent="No disponible: esta instalación no trae el modelo de voz";$("#subNote").textContent="Esta instalación no trae el modelo de subtítulos";}
   const enc=CAPS.encoder;
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
@@ -389,7 +398,7 @@ function upload(file){
   el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(file.name)}</div><span class="state">Subiendo</span></div><div class="bar"><i></i></div><div class="msg">Leyendo el video…</div>`;
   $("#jobs").prepend(el);
   const x=new XMLHttpRequest();
-  x.open("POST",`/upload?t=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(file.name)}&n=${S.n}&len=${analysisLen()}&smart=${S.smart?1:0}&snap=${S.snap?1:0}&lang=${S.sub_lang}`);
+  x.open("POST",`/upload?t=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(file.name)}&n=${S.n}&len=${analysisLen()}&smart=${S.smart?1:0}&query=${encodeURIComponent(QUERY)}&snap=${S.snap?1:0}&lang=${S.sub_lang}`);
   x.setRequestHeader("X-Token",TOKEN);
   x.upload.onprogress=e=>{if(e.lengthComputable){el.querySelector(".bar i").style.width=(e.loaded/e.total*100)+"%";el.querySelector(".msg").textContent="Subiendo… "+Math.round(e.loaded/e.total*100)+"%"}};
   x.onload=()=>{el.remove();let d={};try{d=JSON.parse(x.responseText)}catch(e){}
@@ -405,7 +414,7 @@ $("#drop").addEventListener("drop",e=>{[...e.dataTransfer.files].forEach(f=>{if(
 $("#btnUrl").onclick=async()=>{
   const url=$("#url").value.trim();if(!url)return;
   const num=id=>Number($("#"+id).value)||0;
-  const r=await post("/fetch",{url,n:S.n,len:analysisLen(),smart:S.smart,snap:S.snap,lang:S.sub_lang,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
+  const r=await post("/fetch",{url,n:S.n,len:analysisLen(),smart:S.smart,query:QUERY,snap:S.snap,lang:S.sub_lang,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
   if(r.error){alert(r.error);return}
   $("#url").value="";addJobCard(r.id,"Video del link");
 };
@@ -429,10 +438,11 @@ function update(J,d){
   el.querySelector(".stoplive").classList.toggle("hidden",!d.live);
   el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
   if(d.state==="ready"&&J.view!=="ready"){
-    J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||"",points:x.points||0}));J.waiting=S.review;
+    J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||"",points:x.points||0,match:!!x.match}));J.waiting=S.review;
     if(S.review)buildEditor(J,d);else startRender(J);
   }
-  if(d.state==="rendering"&&J.view!=="rendering"){J.view="rendering";J.rendered=true;el.querySelector(".body").innerHTML=""}
+  if(d.state==="rendering"&&J.view!=="rendering"){J.view="rendering";J.rendered=true;J.shown=0;el.querySelector(".body").innerHTML=""}
+  if(d.state==="rendering"&&d.ready_clips&&d.ready_clips.length!==J.shown){J.shown=d.ready_clips.length;showClips(J,Object.assign({},d,{clips:d.ready_clips}))}
   if(d.state==="done"&&J.view!=="done"){J.view="done";showClips(J,d)}
   if(d.state==="error"||d.state==="cancelled"){J.view=d.state;if(d.state==="cancelled")el.querySelector(".body").innerHTML=""}
   if(d.warnings&&d.warnings.length&&J.view!=="ready"){
@@ -485,7 +495,7 @@ function buildEditor(J,d){
           e.style.left=(s.start/dur*100)+"%";const inp=rows.children[i]&&rows.children[i].querySelector(".st");if(inp)inp.value=s.start};
         e.onpointerup=()=>{e.onpointermove=null;layout()}};
       const r=document.createElement("div");r.className="segrow";
-      r.innerHTML=`<span class="n">${i+1}</span><span>${s.points?`<b style="color:var(--yellow)">${s.points}</b> · `:""}${fmt(s.start)} → ${fmt(s.start+s.len)}${s.points&&s.points===Math.max(...J.segs.map(z=>z.points||0))?" · <b>CLIP ESTE PRIMERO</b>":""}<br><small style="color:var(--muted)">${esc(s.text||"")}</small></span><input class="st" type="number" min="0" max="${Math.floor(dur)}" step="1" value="${s.start}" title="Inicio (s)"><input class="ln" type="number" min="3" max="600" step="1" value="${s.len}" title="Duración (s)"><span class="b"><button class="btn sm pv">▶</button> <button class="btn sm danger rm">✕</button></span>`;
+      r.innerHTML=`<span class="n">${i+1}</span><span>${s.match?"✔ coincide con tu búsqueda · ":""}${s.points?`<b style="color:var(--yellow)">${s.points}</b> · `:""}${fmt(s.start)} → ${fmt(s.start+s.len)}${s.points&&s.points===Math.max(...J.segs.map(z=>z.points||0))?" · <b>CLIP ESTE PRIMERO</b>":""}<br><small style="color:var(--muted)">${esc(s.text||"")}</small></span><input class="st" type="number" min="0" max="${Math.floor(dur)}" step="1" value="${s.start}" title="Inicio (s)"><input class="ln" type="number" min="3" max="600" step="1" value="${s.len}" title="Duración (s)"><span class="b"><button class="btn sm pv">▶</button> <button class="btn sm danger rm">✕</button></span>`;
       r.querySelector(".st").onchange=ev=>{s.start=Math.max(0,Math.min(dur-1,+ev.target.value||0));layout()};
       r.querySelector(".ln").onchange=ev=>{s.len=Math.max(3,Math.min(600,+ev.target.value||30));layout()};
       r.querySelector(".pv").onclick=()=>{v.currentTime=s.start;stopAt=s.start+s.len;v.play().catch(()=>{})};
@@ -508,7 +518,7 @@ function showClips(J,d){
     const src=`/clips/${J.id}/${c.name}?t=${encodeURIComponent(TOKEN)}`;
     html+=`<div class="clip"><video controls preload="metadata" playsinline src="${src}"></video>
     <div class="meta"><span>${c.part?`Parte ${c.part[0]}/${c.part[1]} · `:""}${c.points?`Nota ${c.points} · `:""}Desde ${esc(c.start)}</span><span>${c.len} s</span></div>
-    ${c.title?`<div class="note" style="margin:0 0 6px"><b>${esc(c.title)}</b><br>${esc((c.tags||[]).join(" "))}<br><button class="btn sm cp" data-t="${esc(c.title+" "+(c.tags||[]).join(" "))}">Copiar</button></div>`:""}
+    ${c.title?`<div class="note" style="margin:0 0 6px"><b>${esc(c.title)}</b><br>${esc(c.desc||"")}<br>${esc((c.tags||[]).join(" "))}<br><button class="btn sm cp" data-t="${esc(c.title+"\n"+(c.desc||"")+"\n"+(c.tags||[]).join(" "))}">Copiar</button></div>`:""}
     <a class="btn go dl" data-name="${esc(c.name)}" href="${src}&dl=1" download="${esc(c.name)}" style="font-size:15px;padding:9px">Descargar</a></div>`});
   html+=`</div>`;
   if(d.saved&&d.saved.length)html+=`<p class="note">Guardados solos en tu carpeta (${d.saved.length}).</p>`;

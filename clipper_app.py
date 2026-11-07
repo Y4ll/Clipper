@@ -102,7 +102,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -401,16 +401,20 @@ def set_gemini_key(key):
     return True
 
 
-def gemini_title(text, lang):
+def gemini_title(text, lang, tone="directo"):
     """Pide a Gemini un titulo gancho y hashtags. Solo se envia el texto del clip, nunca el video."""
     key = get_gemini_key()
     if not key or len(text.strip()) < 15:
         return None
     idioma = {"en": "ingles", "es": "espanol"}.get(lang, "el mismo idioma del texto")
+    tono = {"directo": "directo y llamativo", "gracioso": "gracioso y con humor",
+            "dramatico": "dramatico y con tension", "misterioso": "misterioso, que deje con ganas de ver mas",
+            "epico": "epico y exagerado"}.get(tone, "directo y llamativo")
     prompt = ("Eres editor de clips virales para TikTok/Reels/Shorts. Del texto de este clip "
-              f"escribe un TITULO GANCHO de maximo 6 palabras en {idioma}, en mayusculas, sin "
-              "comillas ni emojis, y 3 hashtags relevantes. Responde solo JSON: "
-              '{"title": "...", "tags": ["#a", "#b", "#c"]}\n\nTexto del clip:\n' + text[:3000])
+              f"escribe un TITULO GANCHO de maximo 6 palabras en {idioma}, tono {tono}, en mayusculas, "
+              "sin comillas ni emojis; una descripcion corta para publicar (maximo 140 caracteres) y "
+              "3 hashtags relevantes. Responde solo JSON: "
+              '{"title": "...", "desc": "...", "tags": ["#a", "#b", "#c"]}\n\nTexto del clip:\n' + text[:3000])
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"responseMimeType": "application/json",
                                             "temperature": 0.7}}).encode("utf-8")
@@ -426,7 +430,8 @@ def gemini_title(text, lang):
             out = json.loads(raw)
             title = re.sub(r"[\r\n]+", " ", str(out.get("title", ""))).strip().upper()[:60]
             tags = [str(t).strip() for t in (out.get("tags") or []) if str(t).strip().startswith("#")][:4]
-            return {"title": title, "tags": tags} if title else None
+            desc = re.sub(r"\s+", " ", str(out.get("desc", ""))).strip()[:160]
+            return {"title": title, "tags": tags, "desc": desc} if title else None
         except urllib.error.HTTPError as e:
             last_err = e
             if e.code in (404, 400):
@@ -660,7 +665,12 @@ def speech_score(cues, length):
     return min(1.0, 0.6 * dens + min(0.4, 0.15 * hits)), text[:90]
 
 
-def smart_rank(job_id, video, cands, want, length, lang, jdir, job):
+def norm_text(t):
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", str(t).lower()) if not unicodedata.combining(c))
+
+
+def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
     """Re-ordena los tramos candidatos escuchando lo que se dice en cada uno."""
     wh = find_whisper()
     if not wh:
@@ -668,20 +678,24 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job):
     top = max((m["score"] for m in cands), default=1.0) or 1.0
     t0, limit = time.time(), 240          # maximo 4 min de analisis extra
     scored = []
+    terms = [t for t in norm_text(query).split() if len(t) >= 3][:6]
     for i, m in enumerate(cands, 1):
         job.update(msg=f"Escuchando los momentos... {i} de {len(cands)}",
                    pct=int(60 + 38 * i / len(cands)))
-        sc, snippet = 0.0, ""
+        sc, snippet, match = 0.0, "", False
         if time.time() - t0 < limit:
             try:
                 cues = transcribe(job_id, video, m["start"], m["len"], lang, jdir, 100 + i)
                 sc, snippet = speech_score(cues or [], m["len"])
+                if terms:
+                    full = norm_text(" ".join(c[2] for c in (cues or [])))
+                    match = any(t in full for t in terms)
             except Cancelled:
                 raise
             except Exception:  # noqa: BLE001
                 sc, snippet = 0.0, ""
-        final = 0.6 * m["score"] / top + sc
-        scored.append(dict(m, text=snippet, speech=sc, final=final))
+        final = 0.6 * m["score"] / top + sc + (2.0 if match else 0.0)
+        scored.append(dict(m, text=snippet, speech=sc, final=final, match=match))
     scored.sort(key=lambda m: m["final"], reverse=True)
     return scored[:want], True
 
@@ -801,6 +815,9 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
         new = f"vs{j}"
         graph += f";[{last}]{drawtext(font, f'{pre}s{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
         last = new
+    if o.get("res") == 720:
+        graph += f";[{last}]scale=720:1280[vres]"
+        last = "vres"
     agraph, alabel = build_audio(o, keep, has_audio, music_idx)
     if agraph:
         graph += ";" + agraph
@@ -871,7 +888,9 @@ def clean_opts(raw, seg_len=120):
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
         "fps": int(pick("fps", (0, 30, 60), 0)),
         "quality": pick("quality", ("fast", "best"), "fast"),
-        "ai_title": bool(raw.get("ai_title")), "punch": bool(raw.get("punch")),
+        "ai_title": bool(raw.get("ai_title")),
+        "ai_tone": pick("ai_tone", ("directo", "gracioso", "dramatico", "misterioso", "epico"), "directo"),
+        "res": int(pick("res", (720, 1080), 1080)), "punch": bool(raw.get("punch")),
         "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean"), "karaoke"),
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
@@ -1046,12 +1065,18 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         moments = None
         smart_used = False
         if smart and energy and max(energy) >= 20 and find_whisper():
-            cands = pick_moments(energy, duration, length, min(15, max(want * 3, want + 4)))
+            query = smart.get("query", "")
+            ncand = min(25, max(want * 4, 15)) if query else min(15, max(want * 3, want + 4))
+            cands = pick_moments(energy, duration, length, ncand)
             moments, used = smart_rank(job_id, video, cands, want, length, smart["lang"],
-                                       jdir, job)
+                                       jdir, job, query)
             moments = sorted(moments, key=lambda m: m["start"])
             smart_used = bool(used)
             note = "Momentos elegidos por volumen y por lo que se dice"
+            if query:
+                hits = sum(1 for m in moments if m.get("match"))
+                note = (f"Busqueda «{query[:30]}»: {hits} momento(s) donde se dice. "
+                        "Solo se busca en los tramos mas fuertes del video.")
         if moments is None:
             moments = pick_moments(energy, duration, length, want)
         if snap and energy and max(energy) >= 20:
@@ -1060,6 +1085,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             moments = score_moments(moments, energy, smart_used)
         if not energy or max(energy) < 20:
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
+        if smart and smart.get("query") and not find_whisper():
+            note = "Esta instalacion no trae Whisper: no se pudo buscar por lo que se dice."
         if job.get("note"):
             note += ". " + job["note"]
         job.update(state="ready", msg=note, pct=100, duration=duration,
@@ -1078,7 +1105,8 @@ def render_job(job_id, video, segments, o):
     job, jdir = JOBS[job_id], WORK / job_id
     state = rt(job_id)
     try:
-        job.update(state="rendering", msg="Preparando...", pct=0, clips=[], saved=[], warnings=[])
+        job.update(state="rendering", msg="Preparando...", pct=0, clips=[], saved=[], warnings=[],
+                   ready_clips=[])
         font = find_font()
         if (o["texts"] or o["subs"]) and not font:
             job["warnings"].append("No se encontro una fuente para los textos; salieron sin texto.")
@@ -1167,7 +1195,7 @@ def render_job(job_id, video, segments, o):
             ai = None
             if o["ai_title"] and heard:
                 try:
-                    ai = gemini_title(" ".join(w[2] for w in heard), o["sub_lang"])
+                    ai = gemini_title(" ".join(w[2] for w in heard), o["sub_lang"], o["ai_tone"])
                 except Exception as e:  # noqa: BLE001
                     warn(str(e)[:120])
             oc = dict(o)
@@ -1240,8 +1268,13 @@ def render_job(job_id, video, segments, o):
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
                                   "len": round(out_len), "saved": saved,
                                   "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", []),
+                                  "desc": (ai or {}).get("desc", ""),
                                   "points": seg.get("points", 0),
                                   "part": list(seg["part"]) if seg.get("part") else None}
+                job["ready_clips"] = [
+                    {"name": r["name"], "start": r["start"], "len": r["len"], "title": r["title"],
+                     "tags": r["tags"], "desc": r["desc"], "points": r["points"], "part": r["part"]}
+                    for r in results if r]
                 report()
 
         cpus = os.cpu_count() or 2
@@ -1271,7 +1304,7 @@ def render_job(job_id, video, segments, o):
         if real:
             raise real[0]
         job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"],
-                         "title": r["title"], "tags": r["tags"], "points": r["points"], "part": r["part"]}
+                         "title": r["title"], "tags": r["tags"], "desc": r["desc"], "points": r["points"], "part": r["part"]}
                         for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
@@ -1553,8 +1586,9 @@ class Handler(BaseHTTPRequestHandler):
             b = clean_num(body.get("to_min"), 0, 2000, 0) * 60
             last = clean_num(body.get("last_min"), 0, 2000, 0)
             rng = (a, b if b > a else None, last)
-            smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es"} \
-                if body.get("smart") else None
+            qy = str(body.get("query") or "").strip()[:80]
+            smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
+                     "query": qy} if (body.get("smart") or qy) else None
             snap = body.get("snap") is not False
             threading.Thread(target=analyze_job,
                              args=(job_id, None, url, want, length, rng, smart, snap),
@@ -1670,8 +1704,9 @@ class Handler(BaseHTTPRequestHandler):
         want = int(clean_num(q.get("n", ["5"])[0], 1, 40, 5))
         seg = int(clean_num(q.get("len", ["30"])[0], 3, 600, 30))
         lang = q.get("lang", ["es"])[0]
-        smart = {"lang": lang if lang in ("es", "en", "auto") else "es"} \
-            if q.get("smart", ["0"])[0] == "1" else None
+        qy = q.get("query", [""])[0].strip()[:80]
+        smart = {"lang": lang if lang in ("es", "en", "auto") else "es", "query": qy} \
+            if (q.get("smart", ["0"])[0] == "1" or qy) else None
         snap = q.get("snap", ["1"])[0] != "0"
         threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart, snap),
                          daemon=True).start()
