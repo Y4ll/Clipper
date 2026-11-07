@@ -112,7 +112,11 @@ details.card[open]>summary{margin-bottom:14px}
       <input type="text" id="url" placeholder="…o pega el link de un video (YouTube, etc.)" autocomplete="off">
       <button class="btn" id="btnUrl">Traer</button>
     </div>
-    <p class="note" id="urlNote">Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
+    <div class="grid" id="rangeBox" style="margin-top:10px">
+      <div class="field"><label>Solo los últimos (minutos)</label><input type="number" id="lastMin" min="0" placeholder="Todo el video"></div>
+      <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
+    </div>
+    <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
   </div>
 
   <div class="card">
@@ -175,6 +179,8 @@ details.card[open]>summary{margin-bottom:14px}
     <summary>Más ajustes</summary>
     <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
     <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
+    <div class="field" style="margin-top:8px"><label>Velocidad</label><div class="chips" id="quality">
+      <button class="chip" data-v="fast">Rápido</button><button class="chip" data-v="best">Mejor calidad</button></div></div>
     <div class="field" style="margin-top:8px"><label>Fluidez (fps)</label><div class="chips" id="fps">
       <button class="chip" data-v="0">Igual que el original</button><button class="chip" data-v="30">30</button><button class="chip" data-v="60">60</button></div></div>
     <label class="tog" style="margin-top:8px"><input type="checkbox" id="autosave"><span>Guardar los clips solos en una carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
@@ -199,7 +205,7 @@ const native=()=>!!(window.pywebview&&window.pywebview.api&&window.pywebview.api
 $("#build").textContent=BUILD;
 
 /* ---------- ajustes ---------- */
-const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,gpu:true,review:true,autosave:false,out_dir:""};
+const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
 const PRESETS={tiktok:30,reels:30,shorts:45};
@@ -211,7 +217,7 @@ function chips(id,key,cb){
     const v=b.dataset.v;S[key]=(key==="fps")?Number(v):v;paint();persist();cb&&cb(v)});
 }
 function paint(){
-  for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"]])
+  for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"]])
     $("#"+id).querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v));
   $("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   for(const k of ["zoom","shake","subs","gpu","review","autosave"])$("#"+k).checked=!!S[k];
@@ -221,7 +227,7 @@ function paint(){
 }
 chips("preset","preset",v=>{if(PRESETS[v]){S.len=PRESETS[v];paint();persist()}});
 chips("mode","mode");chips("text_pos","text_pos");chips("text_color","text_color");chips("text_size","text_size");
-chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");
+chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chips("quality","quality");
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
 for(const k of ["zoom","shake","subs","gpu","review","autosave"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
@@ -251,7 +257,7 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
-  if(!CAPS.ytdlp){$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
+  if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
 }
 async function loadAssets(){
@@ -320,7 +326,8 @@ $("#file").onchange=e=>{[...e.target.files].forEach(upload);e.target.value=""};
 $("#drop").addEventListener("drop",e=>{[...e.dataTransfer.files].forEach(f=>{if(/^video\//.test(f.type)||/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name))upload(f)})});
 $("#btnUrl").onclick=async()=>{
   const url=$("#url").value.trim();if(!url)return;
-  const r=await post("/fetch",{url,n:S.n,len:S.len});
+  const num=id=>Number($("#"+id).value)||0;
+  const r=await post("/fetch",{url,n:S.n,len:S.len,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
   if(r.error){alert(r.error);return}
   $("#url").value="";addJobCard(r.id,"Video del link");
 };
@@ -364,7 +371,7 @@ function startRender(J){
 /* ---------- editor de momentos ---------- */
 function buildEditor(J,d){
   const body=J.el.querySelector(".body");
-  body.innerHTML=`<div class="editor"><div class="note" style="margin:10px 0">Estos son los mejores momentos. Arrastra para mover, ajusta los segundos o añade más.</div>
+  body.innerHTML=`<div class="editor"><div class="note" style="margin:10px 0">${esc(d.msg)}. Arrastra para mover, ajusta los segundos o añade más.</div>
   <video controls preload="metadata" playsinline></video>
   <div class="wave"><canvas></canvas></div>
   <div class="note wavehint">Haz clic en la gráfica para saltar a ese punto. Total: ${fmt(d.duration)}</div>

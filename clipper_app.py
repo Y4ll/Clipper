@@ -62,7 +62,7 @@ def resource_path(name):
 APP_DIR = Path(sys.executable).parent if getattr(sys, "frozen", False) \
     else Path(__file__).resolve().parent
 
-SAMPLE_RATE = 4000
+SAMPLE_RATE = 2000
 IDLE_LIMIT = 120          # segundos sin que la ventana responda antes de cerrar el programa
 MAX_UPLOAD = 4 * 1024 ** 3
 JOB_MAX_AGE_SEC = 24 * 3600
@@ -97,7 +97,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir"}
+                "review", "autosave", "out_dir", "quality"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -119,7 +119,7 @@ class Cancelled(Exception):
 
 # ------------------------------------------------------------------ procesos
 def rt(job_id):
-    return RT.setdefault(job_id, {"cancel": threading.Event(), "proc": None})
+    return RT.setdefault(job_id, {"cancel": threading.Event(), "procs": set(), "lock": threading.Lock()})
 
 
 def run_proc(cmd, cwd=None, job_id=None, on_line=None):
@@ -130,7 +130,8 @@ def run_proc(cmd, cwd=None, job_id=None, on_line=None):
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT, cwd=cwd, creationflags=NO_WINDOW)
     if state:
-        state["proc"] = p
+        with state["lock"]:
+            state["procs"].add(p)
     tail = deque(maxlen=25)
     try:
         for raw in p.stdout:
@@ -143,7 +144,8 @@ def run_proc(cmd, cwd=None, job_id=None, on_line=None):
         p.wait()
     finally:
         if state:
-            state["proc"] = None
+            with state["lock"]:
+                state["procs"].discard(p)
     if state and state["cancel"].is_set():
         raise Cancelled()
     if p.returncode != 0:
@@ -189,17 +191,18 @@ def probe_duration(video):
 
 
 def energy_per_second(wav_path):
+    out = []
     with wave.open(str(wav_path), "rb") as w:
         rate = w.getframerate()
-        frames = w.readframes(w.getnframes())
-    samples = array.array("h")
-    samples.frombytes(frames)
-    if sys.byteorder == "big":
-        samples.byteswap()
-    out = []
-    for i in range(0, len(samples) - rate + 1, rate):
-        block = samples[i:i + rate]
-        out.append(math.sqrt(sum(s * s for s in block) / rate))
+        while True:   # un segundo cada vez: no carga horas de audio en memoria
+            frames = w.readframes(rate)
+            if len(frames) < rate * 2:
+                break
+            block = array.array("h")
+            block.frombytes(frames)
+            if sys.byteorder == "big":
+                block.byteswap()
+            out.append(math.sqrt(sum(x * x for x in block) / rate))
     return out
 
 
@@ -223,11 +226,23 @@ def pick_moments(energy, duration, length, count):
     for x in e:
         p1.append(p1[-1] + x)
         p2.append(p2[-1] + x * x)
+    # picos: lo mas alto de cada tramo (un grito o explosion cuenta aunque dure poco)
+    peaks = [0.0] * (total - length + 1)
+    dq = deque()
+    for i, x in enumerate(e):
+        while dq and e[dq[-1]] <= x:
+            dq.pop()
+        dq.append(i)
+        start = i - length + 1
+        if start >= 0:
+            while dq[0] < start:
+                dq.popleft()
+            peaks[start] = e[dq[0]]
     cands = []
     for s in range(0, total - length + 1):
         mean = (p1[s + length] - p1[s]) / length
         var = max(0.0, (p2[s + length] - p2[s]) / length - mean * mean)
-        cands.append((mean + math.sqrt(var), s))
+        cands.append((mean + math.sqrt(var) + 0.3 * peaks[s], s))
     cands.sort(reverse=True)
     chosen = []
     for score, s in cands:
@@ -279,14 +294,17 @@ def detect_encoder():
     ENCODER["ready"] = True
 
 
-def video_args(enc):
+def video_args(enc, quality="fast"):
     if enc == "h264_nvenc":
-        return ["-c:v", "h264_nvenc", "-preset", "p4", "-b:v", "8M", "-maxrate", "12M"]
+        return ["-c:v", "h264_nvenc", "-preset", "p4" if quality == "best" else "p2",
+                "-b:v", "8M", "-maxrate", "12M"]
     if enc == "h264_qsv":
         return ["-c:v", "h264_qsv", "-preset", "veryfast", "-b:v", "8M"]
     if enc == "h264_amf":
         return ["-c:v", "h264_amf", "-quality", "speed", "-b:v", "8M"]
-    return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23"]
+    if quality == "best":
+        return ["-c:v", "libx264", "-preset", "veryfast", "-crf", "21", "-threads", "0"]
+    return ["-c:v", "libx264", "-preset", "ultrafast", "-crf", "26", "-threads", "0"]
 
 
 # ---------------------------------------------------------------- subtitulos
@@ -347,7 +365,7 @@ def drawtext(font, textfile, size, color, y, a, b):
             f"enable='between(t,{a:.2f},{b:.2f})'")
 
 
-def build_graph(o, length, filler_idx, logo_idx, n_texts, n_cues, font):
+def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
     mode = o["mode"]
     if mode == "split" and filler_idx is None:
         mode = "blur"
@@ -358,9 +376,10 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, n_cues, font):
              f"[{filler_idx}:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[bot];"
              "[top][bot]vstack[v0]")
     else:
+        # el fondo se desenfoca en pequeno y se agranda: se ve igual y cuesta mucho menos
         g = ("[0:v]split[a][b];"
-             "[a]scale=1080:1920:force_original_aspect_ratio=increase,"
-             "crop=1080:1920,boxblur=20:5[bg];"
+             "[a]scale=144:256:force_original_aspect_ratio=increase,crop=144:256,boxblur=3:2,"
+             "scale=1080:1920:flags=bilinear[bg];"
              "[b]scale=1080:-2[fg];"
              "[bg][fg]overlay=(W-w)/2:(H-h)/2[v0]")
     state = {"last": "v0", "n": 0, "g": g}
@@ -371,11 +390,18 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, n_cues, font):
         state["g"] += f";[{state['last']}]{expr}[{new}]"
         state["last"] = new
 
-    if o["zoom"]:
-        stage(f"scale=w='1080*(1+0.14*min(t/{length},1))':h=-2:eval=frame,crop=1080:1920")
-    if o["shake"]:
-        stage("scale=1166:2074,crop=1080:1920:x='(iw-1080)/2+sin(t*37)*16':"
-              "y='(ih-1920)/2+cos(t*29)*16'")
+    if o["zoom"] or o["shake"]:   # zoom y vibracion en un solo paso
+        base = 1166 if o["shake"] else 1080
+        w = f"{base}*(1+0.14*min(t/{length},1))" if o["zoom"] else str(base)
+        if o["zoom"]:
+            sc = f"scale=w='{w}':h=-2:eval=frame"
+        else:
+            sc = f"scale={base}:-2"
+        if o["shake"]:
+            cr = "crop=1080:1920:x='(iw-1080)/2+sin(t*37)*16':y='(ih-1920)/2+cos(t*29)*16'"
+        else:
+            cr = "crop=1080:1920"
+        stage(sc + "," + cr)
     if o["fps"] in (30, 60):
         stage(f"fps={o['fps']}")
     if logo_idx is not None:
@@ -390,11 +416,11 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, n_cues, font):
     color = "0xF5C400" if o["text_color"] == "yellow" else "white"
     ypos = {"top": "h*0.10", "center": "(h-text_h)/2", "bottom": "h*0.74"}[o["text_pos"]]
     for k, t in enumerate(o["texts"][:n_texts]):
-        stage(drawtext(font, f"t{k}.txt", size, color, ypos, t["start"], t["end"]))
+        stage(drawtext(font, f"{pre}t{k}.txt", size, color, ypos, t["start"], t["end"]))
     return state["g"], state["last"]
 
 
-def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font):
+def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font, pre):
     inputs = ["-ss", str(start), "-i", str(video)]
     idx, filler_idx, logo_idx = 1, None, None
     if o["mode"] == "split" and filler:
@@ -403,17 +429,16 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
     if logo:
         inputs += ["-i", str(logo)]
         logo_idx, idx = idx, idx + 1
-    graph, last = build_graph(o, length, filler_idx, logo_idx, texts_n, len(cues), font)
+    graph, last = build_graph(o, length, filler_idx, logo_idx, texts_n, font, pre)
     # subtitulos: un drawtext por frase, al final de la cadena
     for j, (a, b, _t) in enumerate(cues):
-        n = graph.count(";[v") + 1
         new = f"vs{j}"
-        graph += f";[{last}]{drawtext(font, f's{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
+        graph += f";[{last}]{drawtext(font, f'{pre}s{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
         last = new
-        del n
     cmd = [FFMPEG, "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1",
            "-nostats"] + inputs + ["-t", str(length), "-filter_complex", graph,
-                                   "-map", f"[{last}]", "-map", "0:a?"] + video_args(enc) + \
+                                   "-map", f"[{last}]", "-map", "0:a?"] + \
+          video_args(enc, o["quality"]) + \
           ["-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k", "-movflags", "+faststart",
            str(out)]
     return cmd
@@ -473,6 +498,7 @@ def clean_opts(raw, seg_len=120):
         "sub_lang": pick("sub_lang", ("es", "en", "auto"), "es"),
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
         "fps": int(pick("fps", (0, 30, 60), 0)),
+        "quality": pick("quality", ("fast", "best"), "fast"),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
     }
 
@@ -502,7 +528,7 @@ def new_job(name):
     return job_id
 
 
-def download_video(job_id, url, jdir):
+def download_video(job_id, url, jdir, rng=None):
     if not importlib.util.find_spec("yt_dlp"):
         raise RuntimeError("Esta version no incluye la descarga por link.")
     import yt_dlp
@@ -523,21 +549,33 @@ def download_video(job_id, url, jdir):
             "format": "bv*[height<=1080]+ba/b[height<=1080]/b"}
     if os.path.isabs(FFMPEG):
         opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
+    offset = 0
+    if rng:
+        start, end, last = rng
+        if last:   # "solo los ultimos N minutos": hay que saber cuanto dura
+            with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True}) as y0:
+                dur = (y0.extract_info(url, download=False) or {}).get("duration") or 0
+            start, end = (max(0, dur - last * 60), None) if dur else (0, None)
+        if start or end:
+            offset = start or 0
+            opts["download_ranges"] = yt_dlp.utils.download_range_func(
+                None, [(offset, end if end else float("inf"))])
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(url, download=True)
     files = [f for f in jdir.glob("input.*") if f.suffix not in (".part", ".ytdl")]
     if not files:
         raise RuntimeError("No se pudo descargar el video.")
     job["name"] = (str((info or {}).get("title") or "video"))[:80] + ".mp4"
+    job["offset"] = offset
     return max(files, key=lambda f: f.stat().st_size)
 
 
-def analyze_job(job_id, video=None, url=None, want=5, length=30):
+def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None):
     job, jdir = JOBS[job_id], WORK / job_id
     try:
         if url:
             job.update(state="analyzing", msg="Descargando el video...", pct=2)
-            video = download_video(job_id, url, jdir)
+            video = download_video(job_id, url, jdir, rng)
         job.update(state="analyzing", msg="Extrayendo el audio...", pct=12)
         duration = probe_duration(video)
         energy = []
@@ -556,7 +594,10 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30):
         if duration <= 0:
             raise RuntimeError("No se pudo leer el video.")
         wave_data, step = waveform(energy)
-        job.update(state="ready", msg="Momentos listos", pct=100, duration=duration,
+        note = "Momentos listos"
+        if not energy or max(energy) < 20:
+            note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
+        job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=pick_moments(energy, duration, length, want))
     except Cancelled:
@@ -580,7 +621,7 @@ def render_job(job_id, video, segments, o):
         if o["mode"] == "split" and not filler:
             job["warnings"].append("Falta el video de relleno; se uso el fondo borroso.")
         logo = asset_path("logo")
-        enc = ENCODER["name"] if (o["gpu"] and ENCODER["name"]) else "libx264"
+        enc_box = [ENCODER["name"] if (o["gpu"] and ENCODER["name"]) else "libx264"]
         out_dir = None
         if o["autosave"]:
             try:
@@ -593,72 +634,116 @@ def render_job(job_id, video, segments, o):
                 out_dir = None
                 job["warnings"].append("No se pudo usar la carpeta de guardado.")
         total = len(segments)
-        for i, seg in enumerate(segments, 1):
+        fracs = [0.0] * total
+        results = [None] * total
+        lock = threading.Lock()
+        offset = job.get("offset", 0)
+
+        def report():
+            done = sum(1 for r in results if r)
+            job["pct"] = int(sum(fracs) * 100 / total)
+            job["msg"] = f"Clips terminados: {done} de {total}"
+
+        def warn(text):
+            with lock:
+                if text not in job["warnings"]:
+                    job["warnings"].append(text)
+
+        def make(i, seg):
             if state["cancel"].is_set():
                 raise Cancelled()
             start, length = seg["start"], seg["len"]
-            base = (i - 1) * 100 / total
+            pre = f"c{i}_"
 
-            def progress(frac, i=i, base=base):
-                job["pct"] = int(base + frac * 100 / total)
-                job["msg"] = f"Cortando clip {i} de {total}..."
+            def progress(frac):
+                fracs[i - 1] = frac * (0.9 if o["subs"] else 1.0) + (0.1 if o["subs"] else 0)
+                report()
 
             cues = []
-            if o["subs"]:
-                job.update(msg=f"Escribiendo subtitulos del clip {i} de {total}...",
-                           pct=int(base))
+            if o["subs"] and font:
                 try:
                     got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i)
                     if got is None:
-                        job["warnings"].append("Esta version no incluye subtitulos.")
+                        warn("Esta version no incluye subtitulos.")
                     else:
                         cues = got[:60]
                 except Cancelled:
                     raise
                 except Exception:  # noqa: BLE001
-                    job["warnings"].append(f"No se pudieron generar los subtitulos del clip {i}.")
-            if not font:
-                cues = []
+                    warn(f"No se pudieron generar los subtitulos del clip {i}.")
             wrap_w = {"s": 20, "m": 16, "l": 12}[o["text_size"]]
             texts = o["texts"] if font else []
             for k, t in enumerate(texts):
-                (jdir / f"t{k}.txt").write_text(
+                (jdir / f"{pre}t{k}.txt").write_text(
                     "\n".join(textwrap.wrap(t["text"].upper(), wrap_w)[:4]), encoding="utf-8")
-            clean_cues = []
             for j, (a, b, body) in enumerate(cues):
-                (jdir / f"s{j}.txt").write_text(
+                (jdir / f"{pre}s{j}.txt").write_text(
                     "\n".join(textwrap.wrap(body.upper(), 18)[:2]), encoding="utf-8")
-                clean_cues.append((a, b, body))
             out = jdir / f"clip{i}.mp4"
+            enc = enc_box[0]
             cmd = build_command(video, out, start, length, o, enc, filler, logo, len(texts),
-                                clean_cues, font)
+                                cues, font, pre)
             try:
                 run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
             except RuntimeError:
-                if enc == "libx264":
+                if enc == "libx264" or state["cancel"].is_set():
                     raise
-                job["warnings"].append("La tarjeta de video fallo; se uso el procesador.")
-                enc = "libx264"
-                cmd = build_command(video, out, start, length, o, enc, filler, logo, len(texts),
-                                    clean_cues, font)
+                warn("La tarjeta de video fallo; se uso el procesador.")
+                enc_box[0] = "libx264"
+                cmd = build_command(video, out, start, length, o, "libx264", filler, logo,
+                                    len(texts), cues, font, pre)
                 run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
-            job["clips"].append({"name": out.name, "start": fmt_time(start), "len": length})
+            saved = None
             if out_dir:
                 try:
                     dest = unique_path(out_dir, f"{safe_stem(job['name'])}_clip{i}", ".mp4")
                     shutil.copyfile(out, dest)
-                    job["saved"].append(str(dest))
+                    saved = str(dest)
                 except OSError:
-                    job["warnings"].append(f"No se pudo guardar el clip {i} en la carpeta.")
+                    warn(f"No se pudo guardar el clip {i} en la carpeta.")
+            with lock:
+                fracs[i - 1] = 1.0
+                results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
+                                  "len": length, "saved": saved}
+                report()
+
+        cpus = os.cpu_count() or 2
+        workers = 1 if (cpus <= 2 or total == 1) else (2 if cpus < 8 else 3)
+        if o["subs"]:
+            workers = min(workers, 2)
+        errors = []
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futs = [pool.submit(make, i, seg) for i, seg in enumerate(segments, 1)]
+            for f in futs:
+                try:
+                    f.result()
+                except Exception as e:  # noqa: BLE001
+                    errors.append(e)
+                    if not isinstance(e, Cancelled) and not state["cancel"].is_set():
+                        state["cancel"].set()   # un fallo real: parar los demas clips
+                        with state["lock"]:
+                            for pr in list(state["procs"]):
+                                try:
+                                    pr.kill()
+                                except OSError:
+                                    pass
+        if state["cancel"].is_set() and not any(not isinstance(e, Cancelled) for e in errors):
+            raise Cancelled()
+        real = [e for e in errors if not isinstance(e, Cancelled)]
+        if real:
+            raise real[0]
+        job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"]} for r in results if r]
+        job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
-        (jdir / f"clip{len(job['clips']) + 1}.mp4").unlink(missing_ok=True)
     except Exception as e:  # noqa: BLE001
-        if state["cancel"].is_set():
-            job.update(state="cancelled", msg="Cancelado")
+        if isinstance(e, (KeyError, TypeError, ValueError)):
+            msg = "Alguna opcion no es valida. Revisa los textos y los tiempos."
         else:
-            job.update(state="error", msg=str(e)[-300:] or "No se pudieron crear los clips.")
+            msg = str(e)[-300:] or "No se pudieron crear los clips."
+        job.update(state="error", msg=msg)
     finally:
         try:
             Path(video).unlink()
@@ -896,7 +981,11 @@ class Handler(BaseHTTPRequestHandler):
             job_id = new_job("video")
             want = int(clean_num(body.get("n"), 1, 40, 5))
             length = int(clean_num(body.get("len"), 3, 120, 30))
-            threading.Thread(target=analyze_job, args=(job_id, None, url, want, length),
+            a = clean_num(body.get("from_min"), 0, 2000, 0) * 60
+            b = clean_num(body.get("to_min"), 0, 2000, 0) * 60
+            last = clean_num(body.get("last_min"), 0, 2000, 0)
+            rng = (a, b if b > a else None, last)
+            threading.Thread(target=analyze_job, args=(job_id, None, url, want, length, rng),
                              daemon=True).start()
             self._json({"id": job_id})
         elif u.path == "/render":
@@ -905,8 +994,9 @@ class Handler(BaseHTTPRequestHandler):
             jid = q.get("id", [""])[0]
             if jid in RT:
                 RT[jid]["cancel"].set()
-                proc = RT[jid].get("proc")
-                if proc:
+                with RT[jid]["lock"]:
+                    procs = list(RT[jid]["procs"])
+                for proc in procs:
                     try:
                         proc.kill()
                     except OSError:
