@@ -82,6 +82,7 @@ LAST_PING = [0.0]
 JOBS = {}                 # id -> datos que ve la pagina
 RT = {}                   # id -> {cancel: Event, proc: Popen}
 ENCODER = {"name": None, "ready": False}
+HAS_ASS = [False]
 UPDATE = {"state": "idle", "available": False, "version": "", "url": ""}
 
 FONT_CANDIDATES = [
@@ -97,7 +98,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -253,6 +254,29 @@ def pick_moments(energy, duration, length, count):
     return sorted(chosen, key=lambda m: m["start"])
 
 
+def snap_ends(moments, energy, duration, window=4):
+    """Mueve el final de cada clip a la pausa mas cercana (+-4 s) para que no acabe a media frase."""
+    if not energy:
+        return moments
+    out = []
+    ordered = sorted(moments, key=lambda m: m["start"])
+    for k, m in enumerate(ordered):
+        start, length = m["start"], m["len"]
+        limit = ordered[k + 1]["start"] if k + 1 < len(ordered) else int(duration)
+        end = start + length
+        lo, hi = max(start + 3, end - window), min(end + window, limit, len(energy))
+        best = None
+        for t in range(int(lo), int(hi)):
+            if t < len(energy) and (best is None or energy[t] < energy[best]):
+                best = t
+        if best is not None:
+            seg = energy[start:end] or [0]
+            if energy[best] < 0.6 * (sum(seg) / len(seg)):
+                m = dict(m, len=max(3, best + 1 - start))
+        out.append(m)
+    return out
+
+
 def waveform(energy, bins=600):
     if not energy:
         return [], 1
@@ -277,6 +301,16 @@ def ff_escape(path):
 
 
 # ------------------------------------------------------ tarjeta de video (GPU)
+def detect_ass():
+    try:
+        r = subprocess.run([FFMPEG, "-hide_banner", "-filters"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           creationflags=NO_WINDOW, timeout=30)
+        HAS_ASS[0] = b" ass " in r.stdout
+    except Exception:  # noqa: BLE001
+        HAS_ASS[0] = False
+
+
 def detect_encoder():
     """Prueba h264_nvenc, h264_qsv y h264_amf; el primero que funcione se usa."""
     for enc in ("h264_nvenc", "h264_qsv", "h264_amf"):
@@ -291,6 +325,7 @@ def detect_encoder():
                 break
         except Exception:  # noqa: BLE001
             continue
+    detect_ass()
     ENCODER["ready"] = True
 
 
@@ -350,11 +385,62 @@ def transcribe(job_id, video, start, length, lang, jdir, idx):
     prefix = jdir / f"w{idx}"
     threads = max(2, (os.cpu_count() or 4) // 2)
     run_proc([str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-osrt", "-of", str(prefix),
-              "-ml", "22", "-sow", "-np", "-t", str(threads)], cwd=str(exe.parent), job_id=job_id)
+              "-ml", "1", "-sow", "-np", "-t", str(threads)], cwd=str(exe.parent), job_id=job_id)
     srt = Path(str(prefix) + ".srt")
     if not srt.is_file():
         return []
     return parse_srt(srt.read_text(encoding="utf-8", errors="ignore"))
+
+
+def group_words(cues, per=3, gap=0.6):
+    """Junta palabras sueltas en grupos cortos para mostrarlos juntos."""
+    groups, cur = [], []
+    for a, b, w in cues:
+        if cur and (len(cur) >= per or a - cur[-1][1] > gap or re.search(r"[.!?]$", cur[-1][2])):
+            groups.append(cur)
+            cur = []
+        cur.append((a, b, w))
+    if cur:
+        groups.append(cur)
+    return groups
+
+
+FONT_FAMILY = {"impact.ttf": ("Impact", 0), "arialbd.ttf": ("Arial", 1), "segoeuib.ttf": ("Segoe UI", 1),
+               "arial.ttf": ("Arial", 1), "dejavusans-bold.ttf": ("DejaVu Sans", 1),
+               "liberationsans-bold.ttf": ("Liberation Sans", 1)}
+
+
+def ass_time(t):
+    t = max(0.0, t)
+    cs = int(round(t * 100))
+    return f"{cs // 360000}:{cs // 6000 % 60:02d}:{cs // 100 % 60:02d}.{cs % 100:02d}"
+
+
+def write_ass(path, cues, font):
+    """Subtitulos palabra por palabra: el grupo se ve entero y la palabra que se dice va en amarillo."""
+    fam, bold = FONT_FAMILY.get(Path(font).name.lower(), ("Arial", 1)) if font else ("Arial", 1)
+    head = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n\n"
+            "[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,"
+            "BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,"
+            "Shadow,Alignment,MarginL,MarginR,MarginV,Encoding\n"
+            f"Style: Default,{fam},84,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,{-1 if bold else 0},0,0,0,"
+            "100,100,0,0,1,7,0,2,60,60,640,1\n\n"
+            "[Events]\nFormat: Layer,Start,End,Style,Name,MarginL,MarginR,MarginV,Effect,Text\n")
+
+    def clean(w):
+        return re.sub(r"[{}\\]", "", w).strip().upper()
+
+    lines = []
+    for grp in group_words(cues):
+        for i, (a, b, _w) in enumerate(grp):
+            end = grp[i + 1][0] if i + 1 < len(grp) and grp[i + 1][0] - b < 0.3 else b
+            end = max(end, a + 0.12)
+            parts = []
+            for j, (_a, _b, w) in enumerate(grp):
+                color = "&H0000C4F5&" if j == i else "&H00FFFFFF&"   # BGR: amarillo F5C400
+                parts.append("{\\c" + color + "}" + clean(w))
+            lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(end)},Default,,0,0,0,," + " ".join(parts))
+    Path(path).write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
 
 
 HYPE_WORDS = (
@@ -414,7 +500,15 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
     mode = o["mode"]
     if mode == "split" and filler_idx is None:
         mode = "blur"
-    if mode == "crop":
+    if mode == "cam":   # juego arriba, tu camara (recortada del mismo video) abajo
+        cs = o["cam_size"] / 100.0
+        cx = "0" if o["cam_corner"] in ("tl", "bl") else f"iw-iw*{cs}"
+        cy = "0" if o["cam_corner"] in ("tl", "tr") else f"ih-iw*{cs}*0.7111"
+        g = ("[0:v]split[gm][cm];"
+             "[gm]scale=1080:1152:force_original_aspect_ratio=increase,crop=1080:1152[top];"
+             f"[cm]crop=w=iw*{cs}:h=iw*{cs}*0.7111:x={cx}:y={cy},scale=1080:768[bot];"
+             "[top][bot]vstack[v0]")
+    elif mode == "crop":
         g = "[0:v]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920[v0]"
     elif mode == "split":
         g = ("[0:v]scale=1080:960:force_original_aspect_ratio=increase,crop=1080:960[top];"
@@ -465,7 +559,7 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre):
     return state["g"], state["last"]
 
 
-def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font, pre):
+def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues, font, pre, ass=None):
     inputs = ["-ss", str(start), "-i", str(video)]
     idx, filler_idx, logo_idx = 1, None, None
     if o["mode"] == "split" and filler:
@@ -475,7 +569,11 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
         inputs += ["-i", str(logo)]
         logo_idx, idx = idx, idx + 1
     graph, last = build_graph(o, length, filler_idx, logo_idx, texts_n, font, pre)
-    # subtitulos: un drawtext por frase, al final de la cadena
+    if ass:   # subtitulos palabra por palabra (libass); la fuente va en la carpeta fonts
+        graph += f";[{last}]ass={ass}:fontsdir=fonts[vass]"
+        last = "vass"
+        cues = []
+    # sin libass: un drawtext por frase, al final de la cadena
     for j, (a, b, _t) in enumerate(cues):
         new = f"vs{j}"
         graph += f";[{last}]{drawtext(font, f'{pre}s{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
@@ -533,7 +631,9 @@ def clean_opts(raw, seg_len=120):
             b = num(t.get("end"), 0, 600, 3)
             texts.append({"text": str(t["text"]).strip()[:80], "start": a, "end": max(b, a + 0.5)})
     return {
-        "mode": pick("mode", ("blur", "crop", "split"), "blur"),
+        "mode": pick("mode", ("blur", "crop", "split", "cam"), "blur"),
+        "cam_corner": pick("cam_corner", ("tl", "tr", "bl", "br"), "br"),
+        "cam_size": int(num(raw.get("cam_size"), 10, 50, 28)),
         "zoom": bool(raw.get("zoom")), "shake": bool(raw.get("shake")),
         "texts": texts,
         "text_pos": pick("text_pos", ("top", "center", "bottom"), "top"),
@@ -591,7 +691,8 @@ def download_video(job_id, url, jdir, rng=None):
 
     opts = {"outtmpl": str(jdir / "input.%(ext)s"), "noplaylist": True, "quiet": True,
             "no_warnings": True, "progress_hooks": [hook], "merge_output_format": "mp4",
-            "format": "bv*[height<=1080]+ba/b[height<=1080]/b"}
+            "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+            "concurrent_fragment_downloads": 8}
     if os.path.isabs(FFMPEG):
         opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
     offset = 0
@@ -682,7 +783,7 @@ def record_live(job_id, meta, jdir, rng):
     return out
 
 
-def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None):
+def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None, snap=True):
     job, jdir = JOBS[job_id], WORK / job_id
     try:
         if url:
@@ -716,6 +817,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             note = "Momentos elegidos por volumen y por lo que se dice"
         if moments is None:
             moments = pick_moments(energy, duration, length, want)
+        if snap and energy and max(energy) >= 20:
+            moments = snap_ends(moments, energy, duration)
         if not energy or max(energy) < 20:
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
         if job.get("note"):
@@ -799,23 +902,51 @@ def render_job(job_id, video, segments, o):
             for k, t in enumerate(texts):
                 (jdir / f"{pre}t{k}.txt").write_text(
                     "\n".join(textwrap.wrap(t["text"].upper(), wrap_w)[:4]), encoding="utf-8")
-            for j, (a, b, body) in enumerate(cues):
+            phrases = [(g[0][0], g[-1][1], " ".join(w[2] for w in g)) for g in group_words(cues)]
+            ass = None
+            if cues and HAS_ASS[0]:
+                try:
+                    (jdir / "fonts").mkdir(exist_ok=True)
+                    if font:
+                        shutil.copyfile(font, jdir / "fonts" / Path(font).name)
+                    write_ass(jdir / f"{pre}subs.ass", cues, font)
+                    ass = f"{pre}subs.ass"
+                except OSError:
+                    ass = None
+            for j, (a, b, body) in enumerate(phrases):
                 (jdir / f"{pre}s{j}.txt").write_text(
                     "\n".join(textwrap.wrap(body.upper(), 18)[:2]), encoding="utf-8")
             out = jdir / f"clip{i}.mp4"
             enc = enc_box[0]
-            cmd = build_command(video, out, start, length, o, enc, filler, logo, len(texts),
-                                cues, font, pre)
+
+            def attempt(enc_name, use_ass):
+                cmd = build_command(video, out, start, length, o, enc_name, filler, logo,
+                                    len(texts), phrases, font, pre, ass if use_ass else None)
+                run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
+
+            use_ass = ass is not None
             try:
-                run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
+                attempt(enc, use_ass)
             except RuntimeError:
-                if enc == "libx264" or state["cancel"].is_set():
+                if state["cancel"].is_set():
                     raise
-                warn("La tarjeta de video fallo; se uso el procesador.")
-                enc_box[0] = "libx264"
-                cmd = build_command(video, out, start, length, o, "libx264", filler, logo,
-                                    len(texts), cues, font, pre)
-                run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
+                if use_ass:   # puede ser libass o la fuente: reintenta con el metodo simple
+                    warn("Los subtitulos animados fallaron; se uso el estilo simple.")
+                    use_ass = False
+                    try:
+                        attempt(enc, False)
+                    except RuntimeError:
+                        if enc == "libx264":
+                            raise
+                        warn("La tarjeta de video fallo; se uso el procesador.")
+                        enc_box[0] = "libx264"
+                        attempt("libx264", False)
+                elif enc == "libx264":
+                    raise
+                else:
+                    warn("La tarjeta de video fallo; se uso el procesador.")
+                    enc_box[0] = "libx264"
+                    attempt("libx264", False)
             saved = None
             if out_dir:
                 try:
@@ -887,7 +1018,8 @@ def queue_local_file(path):
     seg = int(clean_num(st.get("len"), 3, 120, 30))
     lang = st.get("sub_lang") if st.get("sub_lang") in ("es", "en", "auto") else "es"
     smart = {"lang": lang} if st.get("smart") else None
-    threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart),
+    threading.Thread(target=analyze_job,
+                     args=(job_id, dest, None, want, seg, None, smart, st.get("snap") is not False),
                      daemon=True).start()
     return job_id
 
@@ -1137,7 +1269,9 @@ class Handler(BaseHTTPRequestHandler):
             rng = (a, b if b > a else None, last)
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es"} \
                 if body.get("smart") else None
-            threading.Thread(target=analyze_job, args=(job_id, None, url, want, length, rng, smart),
+            snap = body.get("snap") is not False
+            threading.Thread(target=analyze_job,
+                             args=(job_id, None, url, want, length, rng, smart, snap),
                              daemon=True).start()
             self._json({"id": job_id})
         elif u.path == "/render":
@@ -1248,7 +1382,8 @@ class Handler(BaseHTTPRequestHandler):
         lang = q.get("lang", ["es"])[0]
         smart = {"lang": lang if lang in ("es", "en", "auto") else "es"} \
             if q.get("smart", ["0"])[0] == "1" else None
-        threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart),
+        snap = q.get("snap", ["1"])[0] != "0"
+        threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart, snap),
                          daemon=True).start()
         self._json({"id": job_id})
 
