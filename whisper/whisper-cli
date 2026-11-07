@@ -1,3 +1,6 @@
 #!/bin/sh
 while [ $# -gt 0 ]; do case $1 in -of) OF=$2;; esac; shift; done
-printf '1\n00:00:01,000 --> 00:00:03,000\nHola mundo [MUSICA]\n\n2\n00:00:04,000 --> 00:00:06,000\nsegunda frase\n' > "$OF.srt"
+case "$OF" in
+ *w102) printf '1\n00:00:01,000 --> 00:00:03,000\nno puede ser dios mio vamos\n\n2\n00:00:03,500 --> 00:00:07,000\nwow que fue eso jaja increible\n' > "$OF.srt";;
+ *) : > "$OF.srt";;
+esac

@@ -97,7 +97,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality"}
+                "review", "autosave", "out_dir", "quality", "smart"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -357,6 +357,51 @@ def transcribe(job_id, video, start, length, lang, jdir, idx):
     return parse_srt(srt.read_text(encoding="utf-8", errors="ignore"))
 
 
+HYPE_WORDS = (
+    "no puede ser", "dios", "wow", "increible", "increíble", "que fue eso", "qué fue eso",
+    "jaja", "joder", "mierda", "vamos", "no way", "oh my god", "omg", "let's go", "lets go",
+    "insane", "what the", "holy", "cuidado", "gane", "gané", "le di", "lo mate", "lo maté",
+    "gta", "trailer", "tráiler", "locura", "no lo creo", "mira", "mirad", "clip")
+
+
+def speech_score(cues, length):
+    """0..1: cuanta conversacion con emocion hay en el tramo (habla seguida + palabras de hype)."""
+    if not cues:
+        return 0.0, ""
+    text = " ".join(c[2] for c in cues)
+    low = text.lower()
+    words = len(low.split())
+    hits = sum(1 for w in HYPE_WORDS if w in low)
+    dens = min(1.0, words / max(1.0, length) / 2.5)
+    return min(1.0, 0.6 * dens + min(0.4, 0.15 * hits)), text[:90]
+
+
+def smart_rank(job_id, video, cands, want, length, lang, jdir, job):
+    """Re-ordena los tramos candidatos escuchando lo que se dice en cada uno."""
+    wh = find_whisper()
+    if not wh:
+        return cands[:want], False
+    top = max((m["score"] for m in cands), default=1.0) or 1.0
+    t0, limit = time.time(), 240          # maximo 4 min de analisis extra
+    scored = []
+    for i, m in enumerate(cands, 1):
+        job.update(msg=f"Escuchando los momentos... {i} de {len(cands)}",
+                   pct=int(60 + 38 * i / len(cands)))
+        sc, snippet = 0.0, ""
+        if time.time() - t0 < limit:
+            try:
+                cues = transcribe(job_id, video, m["start"], m["len"], lang, jdir, 100 + i)
+                sc, snippet = speech_score(cues or [], m["len"])
+            except Cancelled:
+                raise
+            except Exception:  # noqa: BLE001
+                sc, snippet = 0.0, ""
+        final = 0.6 * m["score"] / top + sc
+        scored.append(dict(m, text=snippet, final=final))
+    scored.sort(key=lambda m: m["final"], reverse=True)
+    return scored[:want], True
+
+
 # ------------------------------------------------------------ filtros ffmpeg
 def drawtext(font, textfile, size, color, y, a, b):
     ff = f"fontfile='{ff_escape(font)}':" if font else ""
@@ -570,7 +615,7 @@ def download_video(job_id, url, jdir, rng=None):
     return max(files, key=lambda f: f.stat().st_size)
 
 
-def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None):
+def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None):
     job, jdir = JOBS[job_id], WORK / job_id
     try:
         if url:
@@ -595,11 +640,20 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None):
             raise RuntimeError("No se pudo leer el video.")
         wave_data, step = waveform(energy)
         note = "Momentos listos"
+        moments = None
+        if smart and energy and max(energy) >= 20 and find_whisper():
+            cands = pick_moments(energy, duration, length, min(15, max(want * 3, want + 4)))
+            moments, used = smart_rank(job_id, video, cands, want, length, smart["lang"],
+                                       jdir, job)
+            moments = sorted(moments, key=lambda m: m["start"])
+            note = "Momentos elegidos por volumen y por lo que se dice"
+        if moments is None:
+            moments = pick_moments(energy, duration, length, want)
         if not energy or max(energy) < 20:
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
-                   moments=pick_moments(energy, duration, length, want))
+                   moments=moments)
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
@@ -985,7 +1039,9 @@ class Handler(BaseHTTPRequestHandler):
             b = clean_num(body.get("to_min"), 0, 2000, 0) * 60
             last = clean_num(body.get("last_min"), 0, 2000, 0)
             rng = (a, b if b > a else None, last)
-            threading.Thread(target=analyze_job, args=(job_id, None, url, want, length, rng),
+            smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es"} \
+                if body.get("smart") else None
+            threading.Thread(target=analyze_job, args=(job_id, None, url, want, length, rng, smart),
                              daemon=True).start()
             self._json({"id": job_id})
         elif u.path == "/render":
@@ -1080,7 +1136,10 @@ class Handler(BaseHTTPRequestHandler):
             return
         want = int(clean_num(q.get("n", ["5"])[0], 1, 40, 5))
         seg = int(clean_num(q.get("len", ["30"])[0], 3, 120, 30))
-        threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg),
+        lang = q.get("lang", ["es"])[0]
+        smart = {"lang": lang if lang in ("es", "en", "auto") else "es"} \
+            if q.get("smart", ["0"])[0] == "1" else None
+        threading.Thread(target=analyze_job, args=(job_id, dest, None, want, seg, None, smart),
                          daemon=True).start()
         self._json({"id": job_id})
 
