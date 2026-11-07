@@ -3,7 +3,7 @@
 [Setup]
 AppId={{DF690311-EED1-4514-B47B-1B91401091BF}
 AppName=Clipper
-AppVersion=1.0
+AppVersion=2.0
 AppPublisher=Y4ll
 DefaultDirName={autopf}\Clipper
 DefaultGroupName=Clipper
@@ -26,6 +26,7 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 [Files]
 Source: "pack\Clipper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "pack\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "pack\whisper\*"; DestDir: "{app}\whisper"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\Clipper"; Filename: "{app}\Clipper.exe"

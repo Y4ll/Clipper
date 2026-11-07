@@ -1,0 +1,444 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Clipper | Shadow Mode</title>
+<style>
+:root{--yellow:#f5c400;--black:#08090c;--panel:#111318;--panel2:#191c22;--line:#30343c;--text:#f3f3ed;--muted:#92969f;--red:#ff5d5d;--green:#4ade80;--display:Anton,Impact,"Arial Narrow Bold",sans-serif}
+*{box-sizing:border-box}
+html{scrollbar-color:#30343c #08090c}
+body{margin:0;min-height:100vh;color:var(--text);background:radial-gradient(ellipse at 50% 0%,#24252b 0%,transparent 45%),linear-gradient(180deg,#111319,#08090c 70%);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+button,input,select{font:inherit;color:inherit}
+button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.wrap{max-width:900px;margin:0 auto;padding:18px 18px 60px}
+.topbar{display:flex;align-items:center;gap:12px;padding:6px 0 14px}
+.brand{font-family:var(--display);font-size:30px;letter-spacing:.06em;color:var(--yellow);text-transform:uppercase}
+.brand small{font-family:system-ui;font-size:11px;color:var(--muted);letter-spacing:.2em;margin-left:8px}
+.sp{flex:1}
+.pill{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:4px 10px;background:var(--panel)}
+.pill.on{color:var(--yellow);border-color:#6b5700}
+.banner{display:none;align-items:center;gap:12px;border:1px solid #6b5700;background:#1d1900;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+.banner.show{display:flex}
+.banner span{flex:1}
+.hero{text-align:center;padding:10px 0 18px}
+.hero h1{font-family:var(--display);font-weight:400;font-size:clamp(34px,7vw,60px);line-height:1;margin:0 0 8px;text-transform:uppercase;letter-spacing:.02em}
+.hero h1 b{color:var(--yellow);font-weight:400}
+.hero p{margin:0;color:var(--muted)}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
+.label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--yellow);margin:0 0 10px;font-weight:700}
+.drop{border:2px dashed #4a4d55;border-radius:14px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--panel2);transition:.15s}
+.drop:hover,.drop.over{border-color:var(--yellow);background:#1d1b10}
+.drop b{display:block;font-size:18px;margin-bottom:4px}
+.drop span{color:var(--muted);font-size:13px}
+.urlrow{display:flex;gap:8px;margin-top:12px}
+.urlrow input{flex:1;min-width:0}
+input[type=text],input[type=number],select{background:#0c0e12;border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
+input[type=number]{width:84px}
+input[type=range]{accent-color:var(--yellow)}
+.note{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#0c0e12;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px}
+.chip.on{background:var(--yellow);color:#111;border-color:var(--yellow);font-weight:700}
+.chip[disabled]{opacity:.4;cursor:not-allowed}
+.tog{display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;user-select:none}
+.tog input{width:18px;height:18px;accent-color:var(--yellow)}
+.tog small{color:var(--muted);display:block;font-size:12px}
+.btn{border:0;border-radius:10px;padding:11px 18px;cursor:pointer;font-weight:700;background:var(--panel2);border:1px solid var(--line)}
+.btn:hover{border-color:var(--yellow)}
+.btn.go{background:var(--yellow);color:#111;border-color:var(--yellow);font-family:var(--display);font-weight:400;font-size:18px;letter-spacing:.06em;text-transform:uppercase}
+.btn.go:hover{filter:brightness(1.08)}
+.btn.danger{color:var(--red);border-color:#5a2a2a}
+.btn.sm{padding:6px 10px;font-size:13px;border-radius:8px}
+.btn[disabled]{opacity:.4;cursor:not-allowed}
+details.card>summary{cursor:pointer;font-weight:700;list-style:none;display:flex;align-items:center;gap:8px}
+details.card>summary::before{content:"▸";color:var(--yellow)}
+details.card[open]>summary::before{content:"▾"}
+details.card[open]>summary{margin-bottom:14px}
+.textrow{display:grid;grid-template-columns:1fr 70px 70px 34px;gap:6px;margin-bottom:6px;align-items:center}
+.textrow input[type=number]{width:100%}
+.job{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.jobhead{display:flex;align-items:center;gap:10px}
+.jobname{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.state{font-size:12px;color:var(--muted)}
+.bar{height:8px;border-radius:99px;background:#0c0e12;border:1px solid var(--line);overflow:hidden;margin:10px 0 4px}
+.bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#a58200,var(--yellow));transition:width .3s}
+.msg{font-size:13px;color:var(--muted)}
+.err{color:var(--red)}
+.warn{font-size:12px;color:#e8c65a;margin-top:6px}
+.editor video{width:100%;max-height:300px;background:#000;border-radius:10px;margin-bottom:10px}
+.wave{position:relative;height:90px;background:#0c0e12;border:1px solid var(--line);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair;margin-bottom:6px}
+.wave canvas{position:absolute;inset:0;width:100%;height:100%}
+.seg{position:absolute;top:0;bottom:0;background:rgba(245,196,0,.28);border-left:2px solid var(--yellow);border-right:2px solid var(--yellow);cursor:grab}
+.seg span{position:absolute;top:2px;left:4px;font-size:11px;font-weight:700;color:#111;background:var(--yellow);border-radius:4px;padding:0 4px}
+.head{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none}
+.segrow{display:grid;grid-template-columns:26px 1fr 80px 80px auto;gap:6px;align-items:center;margin-bottom:6px;font-size:13px}
+.segrow input{width:100%}
+.segrow .n{font-weight:700;color:var(--yellow)}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.clips{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px;margin-top:12px}
+.clip{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:8px}
+.clip video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px;object-fit:contain}
+.clip .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin:6px 0}
+.clip a,.clip button{display:block;text-align:center;text-decoration:none;width:100%}
+.footer{text-align:center;color:var(--muted);font-size:12px;margin-top:26px}
+.hidden{display:none!important}
+@media(max-width:560px){.segrow{grid-template-columns:22px 1fr 1fr}.segrow .b{grid-column:1/-1}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="topbar">
+    <div class="brand">Clipper<small>SHADOW MODE</small></div>
+    <div class="sp"></div>
+    <span class="pill" id="pEnc">Procesador</span>
+    <span class="pill" id="pSub">Sin subtítulos</span>
+  </div>
+
+  <div class="banner" id="banner"><span id="bannerText">Hay una versión nueva de Clipper.</span><button class="btn sm go" id="btnUpd" style="font-size:14px">Actualizar</button></div>
+
+  <div class="hero">
+    <h1>Del video largo al <b>clip viral</b></h1>
+    <p>Detecta los mejores momentos y los deja en vertical 9:16. Gratis, en tu PC.</p>
+  </div>
+
+  <div class="card">
+    <p class="label">1 · Tu video</p>
+    <div class="drop" id="drop"><b>Suelta tus videos aquí o haz clic</b><span>Puedes elegir varios: se procesan en cola · MP4, MOV, MKV, WEBM</span></div>
+    <input type="file" id="file" accept="video/*" multiple class="hidden">
+    <div class="urlrow" id="urlrow">
+      <input type="text" id="url" placeholder="…o pega el link de un video (YouTube, etc.)" autocomplete="off">
+      <button class="btn" id="btnUrl">Traer</button>
+    </div>
+    <p class="note" id="urlNote">Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
+  </div>
+
+  <div class="card">
+    <p class="label">2 · Formato</p>
+    <div class="field"><label>Plataforma</label>
+      <div class="chips" id="preset">
+        <button class="chip" data-v="tiktok">TikTok · 30 s</button>
+        <button class="chip" data-v="reels">Reels · 30 s</button>
+        <button class="chip" data-v="shorts">Shorts · 45 s</button>
+        <button class="chip" data-v="custom">Personalizado</button>
+      </div></div>
+    <div class="grid" style="margin-top:12px">
+      <div class="field"><label>Cantidad de clips: <b id="nv">5</b></label><input type="range" id="n" min="1" max="20" value="5"></div>
+      <div class="field"><label>Duración de cada clip: <b id="lv">30</b> s</label><input type="range" id="len" min="5" max="90" step="1" value="30"></div>
+    </div>
+    <div class="field" style="margin-top:12px"><label>Cómo se ve</label>
+      <div class="chips" id="mode">
+        <button class="chip" data-v="blur">Fondo borroso</button>
+        <button class="chip" data-v="crop">Recorte lleno</button>
+        <button class="chip" data-v="split">Pantalla dividida</button>
+      </div>
+      <div id="fillerBox" class="hidden" style="margin-top:10px">
+        <div class="note" style="margin:0 0 6px">Pantalla dividida: tu video arriba y un video de relleno abajo (parkour, satisfying…). Usa uno que sea tuyo o con permiso.</div>
+        <button class="btn sm" id="btnFiller">Elegir video de relleno</button> <span class="note" id="fillerName"></span>
+        <button class="btn sm danger hidden" id="btnFillerDel">Quitar</button>
+      </div>
+    </div>
+    <div class="grid" style="margin-top:8px">
+      <label class="tog"><input type="checkbox" id="zoom"><span>Zoom lento<small>Acerca poco a poco</small></span></label>
+      <label class="tog"><input type="checkbox" id="shake"><span>Vibración<small>Un temblor ligero</small></span></label>
+    </div>
+  </div>
+
+  <details class="card" id="optTexts">
+    <summary>Textos, subtítulos y logo</summary>
+    <p class="label">Textos con tiempo</p>
+    <div id="texts"></div>
+    <button class="btn sm" id="addText">+ Añadir texto</button>
+    <div class="grid" style="margin-top:12px">
+      <div class="field"><label>Posición</label><div class="chips" id="text_pos">
+        <button class="chip" data-v="top">Arriba</button><button class="chip" data-v="center">Centro</button><button class="chip" data-v="bottom">Abajo</button></div></div>
+      <div class="field"><label>Color</label><div class="chips" id="text_color">
+        <button class="chip" data-v="yellow">Amarillo</button><button class="chip" data-v="white">Blanco</button></div></div>
+      <div class="field"><label>Tamaño</label><div class="chips" id="text_size">
+        <button class="chip" data-v="s">S</button><button class="chip" data-v="m">M</button><button class="chip" data-v="l">L</button></div></div>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <label class="tog"><input type="checkbox" id="subs"><span>Subtítulos automáticos<small id="subNote">Los escribe tu PC, sin internet</small></span></label>
+    <div class="field" id="subLangBox"><label>Idioma del video</label><div class="chips" id="sub_lang">
+      <button class="chip" data-v="es">Español</button><button class="chip" data-v="en">Inglés</button><button class="chip" data-v="auto">Automático</button></div></div>
+    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
+    <p class="label">Logo o marca de agua (opcional)</p>
+    <button class="btn sm" id="btnLogo">Elegir imagen</button> <span class="note" id="logoName"></span>
+    <button class="btn sm danger hidden" id="btnLogoDel">Quitar</button>
+    <div class="field" style="margin-top:10px"><label>Esquina</label><div class="chips" id="logo_pos">
+      <button class="chip" data-v="tl">↖</button><button class="chip" data-v="tr">↗</button><button class="chip" data-v="bl">↙</button><button class="chip" data-v="br">↘</button></div></div>
+  </details>
+
+  <details class="card">
+    <summary>Más ajustes</summary>
+    <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
+    <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
+    <div class="field" style="margin-top:8px"><label>Fluidez (fps)</label><div class="chips" id="fps">
+      <button class="chip" data-v="0">Igual que el original</button><button class="chip" data-v="30">30</button><button class="chip" data-v="60">60</button></div></div>
+    <label class="tog" style="margin-top:8px"><input type="checkbox" id="autosave"><span>Guardar los clips solos en una carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
+    <div class="actions" style="margin-top:0">
+      <button class="btn sm" id="btnDir">Elegir carpeta</button>
+      <button class="btn sm" id="btnOpenDir">Abrir carpeta</button>
+    </div>
+  </details>
+
+  <div id="jobs"></div>
+  <div class="footer">Clipper · <span id="build"></span> · Todo se procesa en tu PC</div>
+</div>
+
+<script>
+const TOKEN="__TOKEN__", BUILD="__BUILD__";
+const $=s=>document.querySelector(s);
+const API=(p,o={})=>{const u=p+(p.includes("?")?"&":"?")+"t="+encodeURIComponent(TOKEN);o.headers=Object.assign({"X-Token":TOKEN},o.headers||{});return fetch(u,o)};
+const post=(p,b)=>API(p,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(b||{})}).then(r=>r.json());
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const fmt=s=>{s=Math.max(0,Math.round(s));const m=Math.floor(s/60);return m+":"+String(s%60).padStart(2,"0")};
+const native=()=>!!(window.pywebview&&window.pywebview.api&&window.pywebview.api.save_clip);
+$("#build").textContent=BUILD;
+
+/* ---------- ajustes ---------- */
+const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,gpu:true,review:true,autosave:false,out_dir:""};
+let saveT=null;
+const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
+const PRESETS={tiktok:30,reels:30,shorts:45};
+
+function chips(id,key,cb){
+  const box=$("#"+id);
+  box.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{
+    if(b.disabled)return;
+    const v=b.dataset.v;S[key]=(key==="fps")?Number(v):v;paint();persist();cb&&cb(v)});
+}
+function paint(){
+  for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"]])
+    $("#"+id).querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v));
+  $("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
+  for(const k of ["zoom","shake","subs","gpu","review","autosave"])$("#"+k).checked=!!S[k];
+  $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
+  $("#subLangBox").classList.toggle("hidden",!S.subs);
+  $("#outDirTxt").textContent=S.out_dir?S.out_dir:"Sin carpeta elegida";
+}
+chips("preset","preset",v=>{if(PRESETS[v]){S.len=PRESETS[v];paint();persist()}});
+chips("mode","mode");chips("text_pos","text_pos");chips("text_color","text_color");chips("text_size","text_size");
+chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");
+$("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
+$("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
+for(const k of ["zoom","shake","subs","gpu","review","autosave"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+
+function renderTexts(){
+  const box=$("#texts");box.innerHTML="";
+  S.texts.forEach((t,i)=>{
+    const r=document.createElement("div");r.className="textrow";
+    r.innerHTML=`<input type="text" maxlength="80" placeholder="Texto ${i+1}" value="${esc(t.text)}"><input type="number" min="0" step="0.5" value="${t.start}" title="Desde (s)"><input type="number" min="0" step="0.5" value="${t.end}" title="Hasta (s)"><button class="btn sm danger">✕</button>`;
+    const [a,b,c,d]=r.children;
+    a.oninput=()=>{t.text=a.value;persist()};
+    b.oninput=()=>{t.start=+b.value||0;persist()};
+    c.oninput=()=>{t.end=+c.value||0;persist()};
+    d.onclick=()=>{S.texts.splice(i,1);renderTexts();persist()};
+    box.appendChild(r)});
+  $("#addText").classList.toggle("hidden",S.texts.length>=4);
+}
+$("#addText").onclick=()=>{const last=S.texts.length?S.texts[S.texts.length-1].end:0;S.texts.push({text:"",start:last,end:last+3});renderTexts();persist()};
+
+/* ---------- capacidades ---------- */
+let CAPS={};
+async function loadCaps(){
+  try{CAPS=await (await API("/caps")).json()}catch(e){return}
+  $("#pSub").textContent=CAPS.whisper?"Subtítulos listos":"Sin subtítulos";$("#pSub").classList.toggle("on",!!CAPS.whisper);
+  if(!CAPS.whisper){$("#subNote").textContent="Esta instalación no trae el modelo de subtítulos";}
+  const enc=CAPS.encoder;
+  $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
+  $("#pEnc").classList.toggle("on",!!enc);
+  if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
+  if(!CAPS.ytdlp){$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
+  if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
+}
+async function loadAssets(){
+  try{const a=await (await API("/assets")).json();
+    $("#logoName").textContent=a.logo||"";$("#btnLogoDel").classList.toggle("hidden",!a.logo);
+    $("#fillerName").textContent=a.filler||"";$("#btnFillerDel").classList.toggle("hidden",!a.filler)}catch(e){}
+}
+async function pickAsset(role,accept){
+  const inp=document.createElement("input");inp.type="file";inp.accept=accept;
+  inp.onchange=async()=>{const f=inp.files[0];if(!f)return;
+    const r=await API(`/upload?role=${role}&name=${encodeURIComponent(f.name)}`,{method:"POST",body:f});
+    if(!r.ok){alert((await r.json()).error||"No se pudo subir el archivo")}loadAssets()};
+  inp.click();
+}
+$("#btnLogo").onclick=()=>pickAsset("logo","image/*");
+$("#btnFiller").onclick=()=>pickAsset("filler","video/*");
+$("#btnLogoDel").onclick=async()=>{await post("/asset/delete?role=logo");loadAssets()};
+$("#btnFillerDel").onclick=async()=>{await post("/asset/delete?role=filler");loadAssets()};
+$("#btnDir").onclick=async()=>{
+  let p=null;
+  if(window.pywebview&&window.pywebview.api&&window.pywebview.api.pick_folder){p=await window.pywebview.api.pick_folder()}
+  else{p=prompt("Escribe la ruta de la carpeta donde guardar los clips:",S.out_dir||"")}
+  if(p){S.out_dir=p;S.autosave=true;paint();persist()}
+};
+$("#btnOpenDir").onclick=async()=>{await persistNow();const r=await post("/openfolder");if(r.error)alert(r.error)};
+const persistNow=()=>{clearTimeout(saveT);return post("/settings",S)};
+
+/* ---------- actualizaciones ---------- */
+async function checkUpd(){
+  try{const u=await (await API("/update")).json();
+    if(u.available){$("#bannerText").textContent="Hay una versión nueva de Clipper ("+u.version+").";$("#banner").classList.add("show")}
+    else if(u.state!=="done")setTimeout(checkUpd,3000)}catch(e){}
+}
+$("#btnUpd").onclick=async()=>{$("#btnUpd").disabled=true;$("#bannerText").textContent="Descargando la actualización…";
+  const r=await post("/update/install");if(!r.ok){$("#bannerText").textContent="No se pudo actualizar. Baja el instalador desde la página del proyecto.";$("#btnUpd").disabled=false}};
+
+/* ---------- cola de videos ---------- */
+const JOBS={};
+function addJobCard(id,name){
+  const el=document.createElement("div");el.className="job";el.id="job"+id;
+  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm danger cancel">Cancelar</button></div>
+  <div class="bar"><i></i></div><div class="msg"></div><div class="body"></div>`;
+  $("#jobs").prepend(el);
+  JOBS[id]={id,el,name,state:"",segs:null,rendered:false,view:null};
+  el.querySelector(".cancel").onclick=()=>post("/cancel?id="+id);
+  poll(id);
+}
+function upload(file){
+  const tmp="u"+Math.random().toString(36).slice(2);
+  const el=document.createElement("div");el.className="job";el.id=tmp;
+  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(file.name)}</div><span class="state">Subiendo</span></div><div class="bar"><i></i></div><div class="msg">Leyendo el video…</div>`;
+  $("#jobs").prepend(el);
+  const x=new XMLHttpRequest();
+  x.open("POST",`/upload?t=${encodeURIComponent(TOKEN)}&name=${encodeURIComponent(file.name)}&n=${S.n}&len=${S.len}`);
+  x.setRequestHeader("X-Token",TOKEN);
+  x.upload.onprogress=e=>{if(e.lengthComputable){el.querySelector(".bar i").style.width=(e.loaded/e.total*100)+"%";el.querySelector(".msg").textContent="Subiendo… "+Math.round(e.loaded/e.total*100)+"%"}};
+  x.onload=()=>{el.remove();let d={};try{d=JSON.parse(x.responseText)}catch(e){}
+    if(x.status===200&&d.id)addJobCard(d.id,file.name);else alert(d.error||"No se pudo subir el video")};
+  x.onerror=()=>{el.querySelector(".msg").textContent="No se pudo subir el video.";el.querySelector(".msg").classList.add("err")};
+  x.send(file);
+}
+$("#drop").onclick=()=>$("#file").click();
+$("#file").onchange=e=>{[...e.target.files].forEach(upload);e.target.value=""};
+["dragover","dragenter"].forEach(ev=>$("#drop").addEventListener(ev,e=>{e.preventDefault();$("#drop").classList.add("over")}));
+["dragleave","drop"].forEach(ev=>$("#drop").addEventListener(ev,e=>{e.preventDefault();$("#drop").classList.remove("over")}));
+$("#drop").addEventListener("drop",e=>{[...e.dataTransfer.files].forEach(f=>{if(/^video\//.test(f.type)||/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name))upload(f)})});
+$("#btnUrl").onclick=async()=>{
+  const url=$("#url").value.trim();if(!url)return;
+  const r=await post("/fetch",{url,n:S.n,len:S.len});
+  if(r.error){alert(r.error);return}
+  $("#url").value="";addJobCard(r.id,"Video del link");
+};
+
+const LABEL={queued:"En cola",analyzing:"Analizando",ready:"Listo para revisar",rendering:"Cortando",done:"Terminado",error:"Error",cancelled:"Cancelado"};
+async function poll(id){
+  const J=JOBS[id];if(!J)return;
+  let d;
+  try{d=await (await API("/status?id="+id)).json()}catch(e){setTimeout(()=>poll(id),1500);return}
+  if(d.error){J.el.querySelector(".msg").textContent=d.error;return}
+  update(J,d);
+  if(!["done","error","cancelled"].includes(d.state)&&!(d.state==="ready"&&S.review&&!J.rendered&&J.waiting))setTimeout(()=>poll(id),800);
+  else if(d.state==="ready")setTimeout(()=>poll(id),1500);
+}
+function update(J,d){
+  const el=J.el;
+  el.querySelector(".jobname").textContent=d.name;
+  el.querySelector(".state").textContent=LABEL[d.state]||d.state;
+  el.querySelector(".bar i").style.width=(d.state==="ready"?100:d.pct)+"%";
+  const m=el.querySelector(".msg");m.textContent=d.msg;m.classList.toggle("err",d.state==="error");
+  el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
+  if(d.state==="ready"&&J.view!=="ready"){
+    J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len}));J.waiting=S.review;
+    if(S.review)buildEditor(J,d);else startRender(J);
+  }
+  if(d.state==="rendering"&&J.view!=="rendering"){J.view="rendering";J.rendered=true;el.querySelector(".body").innerHTML=""}
+  if(d.state==="done"&&J.view!=="done"){J.view="done";showClips(J,d)}
+  if(d.state==="error"||d.state==="cancelled"){J.view=d.state;if(d.state==="cancelled")el.querySelector(".body").innerHTML=""}
+  if(d.warnings&&d.warnings.length&&J.view!=="ready"){
+    let w=el.querySelector(".warn");if(!w){w=document.createElement("div");w.className="warn";el.appendChild(w)}
+    w.innerHTML=[...new Set(d.warnings)].map(esc).join("<br>")}
+}
+function startRender(J){
+  J.rendered=true;J.waiting=false;
+  const segs=J.segs.filter(s=>s.len>=3);
+  post("/render",{id:J.id,segments:segs,opts:S}).then(r=>{
+    if(r.error){J.rendered=false;J.view=null;J.el.querySelector(".msg").textContent=r.error;J.el.querySelector(".msg").classList.add("err")}
+    else poll(J.id)});
+}
+
+/* ---------- editor de momentos ---------- */
+function buildEditor(J,d){
+  const body=J.el.querySelector(".body");
+  body.innerHTML=`<div class="editor"><div class="note" style="margin:10px 0">Estos son los mejores momentos. Arrastra para mover, ajusta los segundos o añade más.</div>
+  <video controls preload="metadata" playsinline></video>
+  <div class="wave"><canvas></canvas></div>
+  <div class="note wavehint">Haz clic en la gráfica para saltar a ese punto. Total: ${fmt(d.duration)}</div>
+  <div class="rows"></div>
+  <div class="actions"><button class="btn sm add">+ Añadir momento aquí</button><button class="btn go cut">Cortar clips</button></div></div>`;
+  const v=body.querySelector("video"),wave=body.querySelector(".wave"),cv=body.querySelector("canvas"),rows=body.querySelector(".rows");
+  v.src=`/source/${J.id}?t=${encodeURIComponent(TOKEN)}`;
+  v.onerror=()=>{v.classList.add("hidden");body.querySelector(".wavehint").textContent="Este formato no se puede ver aquí, pero los momentos funcionan igual."};
+  let stopAt=null;
+  v.ontimeupdate=()=>{if(stopAt!==null&&v.currentTime>=stopAt){v.pause();stopAt=null}head()};
+  const dur=d.duration||1;
+  function draw(){
+    if(!wave.isConnected)return;
+    const w=wave.clientWidth,h=wave.clientHeight,r=window.devicePixelRatio||1;cv.width=w*r;cv.height=h*r;
+    const c=cv.getContext("2d");c.scale(r,r);c.clearRect(0,0,w,h);c.fillStyle="#6b5700";
+    const n=d.wave.length;if(!n)return;const bw=w/n;
+    d.wave.forEach((val,i)=>{const bh=Math.max(1,val/100*(h-6));c.fillRect(i*bw,(h-bh)/2,Math.max(1,bw-.5),bh)});
+  }
+  const headEl=document.createElement("div");headEl.className="head";wave.appendChild(headEl);
+  function head(){headEl.style.left=(v.currentTime/dur*100)+"%"}
+  function layout(){
+    if(!wave.isConnected)return;
+    wave.querySelectorAll(".seg").forEach(e=>e.remove());
+    rows.innerHTML="";
+    J.segs.forEach((s,i)=>{
+      const e=document.createElement("div");e.className="seg";
+      e.style.left=(s.start/dur*100)+"%";e.style.width=(Math.min(s.len,dur-s.start)/dur*100)+"%";
+      e.innerHTML=`<span>${i+1}</span>`;wave.appendChild(e);
+      e.onpointerdown=ev=>{ev.preventDefault();ev.stopPropagation();e.setPointerCapture(ev.pointerId);
+        const x0=ev.clientX,s0=s.start;
+        e.onpointermove=m=>{const ds=(m.clientX-x0)/wave.clientWidth*dur;s.start=Math.max(0,Math.min(dur-3,Math.round((s0+ds)*10)/10));
+          e.style.left=(s.start/dur*100)+"%";const inp=rows.children[i]&&rows.children[i].querySelector(".st");if(inp)inp.value=s.start};
+        e.onpointerup=()=>{e.onpointermove=null;layout()}};
+      const r=document.createElement("div");r.className="segrow";
+      r.innerHTML=`<span class="n">${i+1}</span><span>${fmt(s.start)} → ${fmt(s.start+s.len)}</span><input class="st" type="number" min="0" max="${Math.floor(dur)}" step="1" value="${s.start}" title="Inicio (s)"><input class="ln" type="number" min="3" max="120" step="1" value="${s.len}" title="Duración (s)"><span class="b"><button class="btn sm pv">▶</button> <button class="btn sm danger rm">✕</button></span>`;
+      r.querySelector(".st").onchange=ev=>{s.start=Math.max(0,Math.min(dur-1,+ev.target.value||0));layout()};
+      r.querySelector(".ln").onchange=ev=>{s.len=Math.max(3,Math.min(120,+ev.target.value||30));layout()};
+      r.querySelector(".pv").onclick=()=>{v.currentTime=s.start;stopAt=s.start+s.len;v.play().catch(()=>{})};
+      r.querySelector(".rm").onclick=()=>{J.segs.splice(i,1);layout()};
+      rows.appendChild(r)});
+    body.querySelector(".cut").disabled=!J.segs.length;
+  }
+  wave.onpointerdown=ev=>{const rect=wave.getBoundingClientRect();v.currentTime=Math.max(0,(ev.clientX-rect.left)/rect.width*dur);head()};
+  body.querySelector(".add").onclick=()=>{J.segs.push({start:Math.floor(Math.min(v.currentTime||0,Math.max(0,dur-3))),len:S.len});J.segs.sort((a,b)=>a.start-b.start);layout()};
+  body.querySelector(".cut").onclick=()=>{v.pause();startRender(J)};
+  new ResizeObserver(()=>{draw();layout()}).observe(wave);
+  draw();layout();
+}
+
+/* ---------- resultados ---------- */
+function showClips(J,d){
+  const body=J.el.querySelector(".body");
+  let html=`<div class="clips">`;
+  d.clips.forEach(c=>{
+    const src=`/clips/${J.id}/${c.name}?t=${encodeURIComponent(TOKEN)}`;
+    html+=`<div class="clip"><video controls preload="metadata" playsinline src="${src}"></video>
+    <div class="meta"><span>Desde ${esc(c.start)}</span><span>${c.len} s</span></div>
+    <a class="btn go dl" data-name="${esc(c.name)}" href="${src}&dl=1" download="${esc(c.name)}" style="font-size:15px;padding:9px">Descargar</a></div>`});
+  html+=`</div>`;
+  if(d.saved&&d.saved.length)html+=`<p class="note">Guardados solos en tu carpeta (${d.saved.length}).</p>`;
+  body.innerHTML=html;
+  body.querySelectorAll(".dl").forEach(a=>a.addEventListener("click",async ev=>{
+    if(!native())return;ev.preventDefault();
+    const r=await window.pywebview.api.save_clip(J.id,a.dataset.name);
+    if(r&&r.ok){a.textContent="Guardado ✓"}else if(r&&!r.cancel){alert("No se pudo guardar el clip")}}));
+}
+
+/* ---------- arranque ---------- */
+(async function init(){
+  try{const s=await (await API("/settings")).json();Object.assign(S,s)}catch(e){}
+  if(!Array.isArray(S.texts))S.texts=[];
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();
+  const beat=()=>fetch("/ping",{cache:"no-store"}).catch(()=>{});beat();setInterval(beat,5000);
+})();
+</script>
+</body>
+</html>
