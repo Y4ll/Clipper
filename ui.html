@@ -194,6 +194,10 @@ details.card[open]>summary{margin-bottom:14px}
     <summary>Más ajustes</summary>
     <label class="tog"><input type="checkbox" id="smart"><span>Selección inteligente<small id="smartNote">Escucha lo que se dice para elegir mejor los momentos. Tarda más en analizar</small></span></label>
     <label class="tog"><input type="checkbox" id="snap"><span>Terminar los clips en una pausa<small>Mueve el final unos segundos para no cortar a media frase</small></span></label>
+    <div class="field" style="margin:10px 0"><label>Título y hashtags con IA (opcional): clave de Gemini</label>
+      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
+      <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div></div>
+    <label class="tog"><input type="checkbox" id="ai_title"><span>Poner título gancho automático<small>Si no escribes tus propios textos, la IA pone uno al inicio del clip y sugiere hashtags</small></span></label>
     <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
     <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
     <div class="field" style="margin-top:8px"><label>Velocidad</label><div class="chips" id="quality">
@@ -222,7 +226,7 @@ const native=()=>!!(window.pywebview&&window.pywebview.api&&window.pywebview.api
 $("#build").textContent=BUILD;
 
 /* ---------- ajustes ---------- */
-const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",ai_title:false,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
 const PRESETS={tiktok:30,reels:30,shorts:45};
@@ -237,7 +241,7 @@ function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"]])
     $("#"+id).querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v));
   $("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","subs","gpu","review","autosave","smart","snap"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","subs","gpu","review","autosave","smart","snap","ai_title"])$("#"+k).checked=!!S[k];
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
   $("#cam_size").value=S.cam_size;$("#csv").textContent=S.cam_size;
@@ -253,7 +257,7 @@ chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chi
 $("#cam_size").oninput=e=>{S.cam_size=+e.target.value;paint();persist()};
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","subs","gpu","review","autosave","smart","snap"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","subs","gpu","review","autosave","smart","snap","ai_title"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";
@@ -280,6 +284,8 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
+  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini||!CAPS.whisper;
+  if(CAPS.gemini)$("#gkey").placeholder="Clave guardada ✓";
   if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
 }
@@ -308,6 +314,9 @@ $("#btnDir").onclick=async()=>{
 $("#btnOpenDir").onclick=async()=>{await persistNow();const r=await post("/openfolder");if(r.error)alert(r.error)};
 const persistNow=()=>{clearTimeout(saveT);return post("/settings",S)};
 
+$("#gsave").onclick=async()=>{const k=$("#gkey").value.trim();if(!k)return;const r=await post("/apikey",{key:k});
+  if(r.error){alert(r.error);return}$("#gkey").value="";loadCaps()};
+$("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};
 /* ---------- actualizaciones ---------- */
 async function checkUpd(){
   try{const u=await (await API("/update")).json();
@@ -454,10 +463,12 @@ function showClips(J,d){
     const src=`/clips/${J.id}/${c.name}?t=${encodeURIComponent(TOKEN)}`;
     html+=`<div class="clip"><video controls preload="metadata" playsinline src="${src}"></video>
     <div class="meta"><span>Desde ${esc(c.start)}</span><span>${c.len} s</span></div>
+    ${c.title?`<div class="note" style="margin:0 0 6px"><b>${esc(c.title)}</b><br>${esc((c.tags||[]).join(" "))}<br><button class="btn sm cp" data-t="${esc(c.title+" "+(c.tags||[]).join(" "))}">Copiar</button></div>`:""}
     <a class="btn go dl" data-name="${esc(c.name)}" href="${src}&dl=1" download="${esc(c.name)}" style="font-size:15px;padding:9px">Descargar</a></div>`});
   html+=`</div>`;
   if(d.saved&&d.saved.length)html+=`<p class="note">Guardados solos en tu carpeta (${d.saved.length}).</p>`;
   body.innerHTML=html;
+  body.querySelectorAll(".cp").forEach(b=>b.onclick=()=>{navigator.clipboard&&navigator.clipboard.writeText(b.dataset.t).then(()=>{b.textContent="Copiado ✓"}).catch(()=>{})});
   body.querySelectorAll(".dl").forEach(a=>a.addEventListener("click",async ev=>{
     if(!native())return;ev.preventDefault();
     const r=await window.pywebview.api.save_clip(J.id,a.dataset.name);

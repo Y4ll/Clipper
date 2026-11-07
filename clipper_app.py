@@ -75,6 +75,9 @@ WORK = Path(tempfile.gettempdir()) / "clipper_app_jobs"
 DATA_DIR = Path(os.environ.get("APPDATA") or (Path.home() / ".config")) / "Clipper"
 SETTINGS_FILE = DATA_DIR / "settings.json"
 ASSET_DIR = DATA_DIR / "assets"
+KEY_FILE = DATA_DIR / "gemini.key"      # la clave va aparte de los ajustes y nunca se manda a la pagina
+GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
+GEMINI_MODELS = ("gemini-2.5-flash", "gemini-flash-latest")
 
 FFMPEG = "ffmpeg"
 LAN_MODE = False
@@ -98,7 +101,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 
@@ -252,6 +255,66 @@ def pick_moments(energy, duration, length, count):
         if len(chosen) == count:
             break
     return sorted(chosen, key=lambda m: m["start"])
+
+
+def get_gemini_key():
+    try:
+        return KEY_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def set_gemini_key(key):
+    key = (key or "").strip()
+    if not key:
+        KEY_FILE.unlink(missing_ok=True)
+        return True
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]{20,200}", key):
+        return False
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    KEY_FILE.write_text(key, encoding="utf-8")
+    try:
+        os.chmod(KEY_FILE, 0o600)
+    except OSError:
+        pass
+    return True
+
+
+def gemini_title(text, lang):
+    """Pide a Gemini un titulo gancho y hashtags. Solo se envia el texto del clip, nunca el video."""
+    key = get_gemini_key()
+    if not key or len(text.strip()) < 15:
+        return None
+    idioma = {"en": "ingles", "es": "espanol"}.get(lang, "el mismo idioma del texto")
+    prompt = ("Eres editor de clips virales para TikTok/Reels/Shorts. Del texto de este clip "
+              f"escribe un TITULO GANCHO de maximo 6 palabras en {idioma}, en mayusculas, sin "
+              "comillas ni emojis, y 3 hashtags relevantes. Responde solo JSON: "
+              '{"title": "...", "tags": ["#a", "#b", "#c"]}\n\nTexto del clip:\n' + text[:3000])
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                       "generationConfig": {"responseMimeType": "application/json",
+                                            "temperature": 0.7}}).encode("utf-8")
+    last_err = None
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(
+            f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=25) as r:
+                data = json.load(r)
+            raw = data["candidates"][0]["content"]["parts"][0]["text"]
+            out = json.loads(raw)
+            title = re.sub(r"[\r\n]+", " ", str(out.get("title", ""))).strip().upper()[:60]
+            tags = [str(t).strip() for t in (out.get("tags") or []) if str(t).strip().startswith("#")][:4]
+            return {"title": title, "tags": tags} if title else None
+        except urllib.error.HTTPError as e:
+            last_err = e
+            if e.code in (404, 400):
+                continue          # modelo no disponible: prueba el siguiente
+            break
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            break
+    raise RuntimeError(f"Gemini no respondio ({getattr(last_err, 'code', 'error')})")
 
 
 def snap_ends(moments, energy, duration, window=4):
@@ -644,6 +707,7 @@ def clean_opts(raw, seg_len=120):
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
         "fps": int(pick("fps", (0, 30, 60), 0)),
         "quality": pick("quality", ("fast", "best"), "fast"),
+        "ai_title": bool(raw.get("ai_title")),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
     }
 
@@ -886,19 +950,30 @@ def render_job(job_id, video, segments, o):
                 report()
 
             cues = []
-            if o["subs"] and font:
+            heard = []
+            if (o["subs"] or (o["ai_title"] and get_gemini_key())) and font:
                 try:
                     got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i)
                     if got is None:
-                        warn("Esta version no incluye subtitulos.")
+                        warn("Esta version no incluye subtitulos ni titulos con IA.")
                     else:
-                        cues = got[:60]
+                        heard = got[:200]
+                        cues = heard if o["subs"] else []
                 except Cancelled:
                     raise
                 except Exception:  # noqa: BLE001
                     warn(f"No se pudieron generar los subtitulos del clip {i}.")
+            ai = None
+            if o["ai_title"] and heard:
+                try:
+                    ai = gemini_title(" ".join(w[2] for w in heard), o["sub_lang"])
+                except Exception as e:  # noqa: BLE001
+                    warn(str(e)[:120])
+            oc = dict(o)
+            if ai and not o["texts"]:
+                oc["texts"] = [{"text": ai["title"], "start": 0.3, "end": min(4.0, length)}]
             wrap_w = {"s": 20, "m": 16, "l": 12}[o["text_size"]]
-            texts = o["texts"] if font else []
+            texts = oc["texts"] if font else []
             for k, t in enumerate(texts):
                 (jdir / f"{pre}t{k}.txt").write_text(
                     "\n".join(textwrap.wrap(t["text"].upper(), wrap_w)[:4]), encoding="utf-8")
@@ -920,7 +995,7 @@ def render_job(job_id, video, segments, o):
             enc = enc_box[0]
 
             def attempt(enc_name, use_ass):
-                cmd = build_command(video, out, start, length, o, enc_name, filler, logo,
+                cmd = build_command(video, out, start, length, oc, enc_name, filler, logo,
                                     len(texts), phrases, font, pre, ass if use_ass else None)
                 run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=length, on_progress=progress)
 
@@ -958,7 +1033,8 @@ def render_job(job_id, video, segments, o):
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
-                                  "len": length, "saved": saved}
+                                  "len": length, "saved": saved,
+                                  "title": (ai or {}).get("title", ""), "tags": (ai or {}).get("tags", [])}
                 report()
 
         cpus = os.cpu_count() or 2
@@ -987,7 +1063,8 @@ def render_job(job_id, video, segments, o):
         real = [e for e in errors if not isinstance(e, Cancelled)]
         if real:
             raise real[0]
-        job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"]} for r in results if r]
+        job["clips"] = [{"name": r["name"], "start": r["start"], "len": r["len"],
+                         "title": r["title"], "tags": r["tags"]} for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
     except Cancelled:
@@ -1211,7 +1288,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"build": BUILD, "whisper": find_whisper() is not None,
                         "ytdlp": importlib.util.find_spec("yt_dlp") is not None,
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
-                        "font": find_font() is not None, "lan": LAN_MODE})
+                        "font": find_font() is not None, "lan": LAN_MODE,
+                        "gemini": bool(get_gemini_key())})
         elif u.path == "/settings":
             self._json(load_settings())
         elif u.path == "/assets":
@@ -1303,6 +1381,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
+        elif u.path == "/apikey":
+            body = self._body_json(2000)
+            ok = set_gemini_key((body or {}).get("key", ""))
+            self._json({"ok": ok} if ok else {"error": "La clave no parece valida."}, 200 if ok else 400)
         elif u.path == "/settings":
             body = self._body_json(30000)
             try:
