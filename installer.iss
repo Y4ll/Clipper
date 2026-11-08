@@ -33,4 +33,4 @@ Name: "{group}\Clipper"; Filename: "{app}\Clipper.exe"
 Name: "{autodesktop}\Clipper"; Filename: "{app}\Clipper.exe"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\Clipper.exe"; Description: "Abrir Clipper"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\Clipper.exe"; Description: "Abrir Clipper"; Flags: nowait postinstall

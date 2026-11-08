@@ -2272,32 +2272,41 @@ def install_update():
 
 
 def _download_update(url):
-    dest = Path(tempfile.gettempdir()) / "ClipperSetup.exe"
+    ver = re.sub(r"[^0-9a-f]", "", str(UPDATE.get("version", "")))[:7] or "nuevo"
+    dest = Path(tempfile.gettempdir()) / f"ClipperSetup-{ver}.exe"
     part = dest.with_suffix(".part")
     try:
-        with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
-            total = int(r.headers.get("Content-Length") or 0)
-            got, last = 0, time.time()
-            while True:
-                chunk = r.read(256 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                got += len(chunk)
-                if total and time.time() - last > 0.3:
-                    last = time.time()
-                    UPDATE.update(pct=int(got * 100 / total),
-                                  msg=f"{got // 1048576} de {total // 1048576} MB")
-        if part.stat().st_size < 1000000 or part.read_bytes()[:2] != b"MZ":
-            raise RuntimeError("El archivo bajado no es un instalador valido.")
-        part.replace(dest)
+        if not (dest.exists() and dest.stat().st_size > 1000000 and dest.read_bytes()[:2] == b"MZ"):
+            have = part.stat().st_size if part.exists() else 0   # reanuda si quedo a medias
+            req = urllib.request.Request(url, headers={"User-Agent": "Clipper"})
+            if have:
+                req.add_header("Range", f"bytes={have}-")
+            with urllib.request.urlopen(req, timeout=60) as r:
+                resumed = have > 0 and getattr(r, "status", 200) == 206
+                total = int(r.headers.get("Content-Length") or 0) + (have if resumed else 0)
+                got, last = (have if resumed else 0), time.time()
+                with open(part, "ab" if resumed else "wb") as f:
+                    while True:
+                        chunk = r.read(256 * 1024)
+                        if not chunk:
+                            break
+                        f.write(chunk)
+                        got += len(chunk)
+                        if total and time.time() - last > 0.3:
+                            last = time.time()
+                            UPDATE.update(pct=int(got * 100 / total),
+                                          msg=f"{got // 1048576} de {total // 1048576} MB")
+            if part.stat().st_size < 1000000 or part.read_bytes()[:2] != b"MZ":
+                part.unlink(missing_ok=True)
+                raise RuntimeError("El archivo bajado no es un instalador valido.")
+            part.replace(dest)
     except Exception as e:  # noqa: BLE001
-        part.unlink(missing_ok=True)
         UPDATE.update(dl="error", msg=str(e)[:150] or "No se pudo bajar la actualizacion.")
         return
-    UPDATE.update(dl="launching", pct=100, msg="Abriendo el instalador...")
-    subprocess.Popen([str(dest)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL)
+    UPDATE.update(dl="launching", pct=100, msg="Instalando...")
+    # /SILENT: sin asistente (solo una barra), cierra Clipper si sigue abierto y lo vuelve a abrir
+    subprocess.Popen([str(dest), "/SILENT", "/CLOSEAPPLICATIONS", "/NORESTART"],
+                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     threading.Timer(1.5, lambda: os._exit(0)).start()
 
 
