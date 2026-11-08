@@ -64,6 +64,7 @@ button{cursor:pointer}
 @keyframes flash{0%,100%{box-shadow:var(--glow)}40%{box-shadow:0 0 0 2px var(--yellow),0 0 30px rgba(245,196,0,.5)}}
 .panel h2{margin:0 0 12px;display:flex;align-items:center;gap:10px;font-family:var(--display);font-style:italic;font-weight:400;font-size:20px;letter-spacing:.02em;color:var(--yellow);text-transform:uppercase}
 .panel h2 .ic{font-size:26px;color:var(--yellow)}
+.grid.focus .panel:not(.tg):not(.p-gen){display:none}.grid.focus .panel.tg{grid-column:span 24}
 .p-video{grid-column:span 17}.p-live{grid-column:span 7}
 .p-qty{grid-column:span 7}.p-fmt{grid-column:span 5}.p-fx{grid-column:span 6}.p-subs{grid-column:span 6}
 .p-yt{grid-column:span 11}.p-adv{grid-column:span 8}.p-gen{grid-column:span 5}
@@ -876,7 +877,11 @@ $("#btnGen").onclick=()=>{
 };
 document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{
   document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("on",x===b));
-  const p=$("#"+b.dataset.go);p.scrollIntoView({behavior:"smooth",block:"start"});
+  const g=document.querySelector(".grid"),p=$("#"+b.dataset.go);
+  g.querySelectorAll(".panel").forEach(x=>x.classList.remove("tg"));
+  if(b.dataset.go==="p-video"){g.classList.remove("focus")}
+  else{g.classList.add("focus");p.classList.add("tg");const d=p.querySelector("details.more");if(d)d.open=true}
+  window.scrollTo(0,0);const m=document.querySelector(".main");if(m)m.scrollTop=0;
   p.classList.remove("flash");void p.offsetWidth;p.classList.add("flash")});
 $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("#file").click()}});
 {const eq=$("#eq");const h=[6,12,18,9,22,14,8,20,11,16,7,19,13,10,21,15,9,17,12,6,18,10,14,8];h.forEach(v=>{const i=document.createElement("i");i.style.height=v+"px";eq.appendChild(i)})}
