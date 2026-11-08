@@ -25,7 +25,7 @@ Requisitos: Windows 10/11 de 64 bits, 4 GB de RAM (8 GB mejor). Clipper abre su 
 - **Selección inteligente:** además del volumen, escucha lo que se dice para elegir mejor. Tarda más en analizar.
 - **Cola:** puedes soltar varios videos; se procesan uno tras otro.
 - **Que la IA elija los momentos (opcional):** con tu clave de Gemini, la IA reordena los mejores candidatos. Solo se envían tiempos y notas de volumen, nunca el video.
-- **Clips automáticos en directo:** al pegar un directo, activa «Sacar clips automáticamente mientras graba».
+- **Clips automáticos en directo:** al pegar un directo, activa «Sacar clips automáticamente mientras graba». Elige cada cuánto analiza (3, 15 o 30 min); la cantidad y la duración de los clips salen de los controles «Cantidad de clips» y «Duración de cada clip».
 - **Monitor de directos:** añade canales (usuario o link de Kick) y Clipper los revisa cada 2 minutos; si uno entra en vivo, graba hasta 60 min y saca clips solo. Clipper tiene que estar abierto.
 - **Subir a YouTube Shorts (opcional):** conecta tu cuenta con la API oficial de Google (ID de cliente de OAuth tipo «App de escritorio», una sola vez). Los clips de directos se suben solos, con visibilidad a tu elección (por defecto privado) y máximo 10 al día. TikTok e Instagram no se pueden desde una app local: sus APIs exigen auditoría, un sitio web propio o una URL pública del video.
 

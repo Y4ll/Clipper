@@ -108,7 +108,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -1359,9 +1359,9 @@ def download_video(job_id, url, jdir, rng=None):
     return max(files, key=lambda f: f.stat().st_size)
 
 
-LIVE_CLIP_EVERY = 3 * 60   # cada cuantos segundos grabados se analiza un tramo nuevo
+LIVE_CLIP_EVERY = 15 * 60  # cada cuantos segundos grabados se analiza un tramo nuevo
 LIVE_MIN_POINTS = 35       # nota minima para que un momento de un directo se corte solo
-LIVE_MAX_SPAN = 30 * 60    # un tramo nunca analiza mas de 30 min de una vez
+LIVE_MAX_SPAN = 32 * 60    # un tramo nunca analiza mas de 32 min (30 de intervalo + solape)
 
 
 def _frag_cut(src, dst, start, dur):
@@ -1420,7 +1420,7 @@ def _live_clipper(job_id, live_ctx, state, opts):
       - "part_ready"   : threading.Event — _live_clipper lo activa al terminar la ronda final
     """
     length = int(opts["length"])
-    clip_every = max(60, LIVE_CLIP_EVERY)
+    clip_every = max(60, int(opts.get("clip_every") or LIVE_CLIP_EVERY))
     min_needed = max(60, length * 2)
     lock = live_ctx["lock"]
     done_until = 0.0   # relativo a la parte actual
@@ -1768,7 +1768,8 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             if smart and smart.get("live_clips"):
                 job["_live_opts"] = {"want": want, "length": length,
                                      "smart": {k: v for k, v in smart.items()
-                                               if k != "live_clips"},
+                                               if k not in ("live_clips", "clip_every")},
+                                     "clip_every": int(smart.get("clip_every") or 15 * 60),
                                      "snap": snap, "auto_render": True}
             video = download_video(job_id, url, jdir, rng)
             if job.get("_live_opts"):   # los clips ya salieron por tramos; no se re-analiza todo
@@ -2380,10 +2381,12 @@ class Handler(BaseHTTPRequestHandler):
             rng = (a, b if b > a else None, last)
             qy = str(body.get("query") or "").strip()[:80]
             live_clips = bool(body.get("live_clips"))
+            clip_every = clean_num(body.get("clip_every_min"), 1, 60, 15)
+            clip_every = clip_every if clip_every in (3, 15, 30) else 15
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
                      "query": qy,
                      "ai_rank": bool(body.get("ai_rank")),
-                     "live_clips": live_clips} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
+                     "live_clips": live_clips, "clip_every": clip_every * 60} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
             if live_clips and not smart:
                 smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
             snap = body.get("snap") is not False
