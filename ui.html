@@ -504,7 +504,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <div class="actions" style="margin-top:6px"><button class="btn sm" id="btnDir"><svg class="ic"><use href="#i-folder"/></svg>Elegir carpeta</button><button class="btn sm" id="btnOpenDir">Abrir carpeta</button></div>
       <hr>
       <div class="lbl">Título y hashtags con IA (opcional): clave de Gemini</div>
-      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
+      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm" id="gtest">Probar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
       <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div>
       <div style="margin-top:10px"><div class="lbl">Tono del título</div><div class="chips" id="ai_tone"><button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
     </details>
@@ -619,7 +619,7 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
-  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini;$("#ai_listen").disabled=!CAPS.gemini||!CAPS.whisper;
+  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini;$("#ai_listen").disabled=!CAPS.gemini;
   $("#aiRankRow").style.display=CAPS.gemini?"":"none";$("#ai_rank").disabled=!CAPS.gemini;
   document.querySelector('#pick [data-m=voz]').disabled=!CAPS.whisper;$("#pcIa").disabled=!(CAPS.gemini&&CAPS.whisper);
   if(!CAPS.whisper)document.querySelector('#pick [data-m=voz] span').textContent="No disponible: esta instalación no trae el modelo de voz.";
@@ -705,6 +705,9 @@ const persistNow=()=>{clearTimeout(saveT);return post("/settings",S)};
 
 $("#gsave").onclick=async()=>{const k=$("#gkey").value.trim();if(!k)return;const r=await post("/apikey",{key:k});
   if(r.error){alert(r.error);return}$("#gkey").value="";loadCaps()};
+$("#gtest").onclick=async()=>{const b=$("#gtest"),n=$("#gnote");b.disabled=true;n.textContent="Probando la clave...";
+  try{const r=await post("/apikey/test",{key:$("#gkey").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"}
+  catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};
 /* ---------- actualizaciones ---------- */
 async function checkUpd(){

@@ -1077,6 +1077,34 @@ def norm_text(t):
     return "".join(c for c in unicodedata.normalize("NFKD", str(t).lower()) if not unicodedata.combining(c))
 
 
+def gemini_test(key=None):
+    """Prueba la clave con una pregunta minima. Devuelve (ok, mensaje)."""
+    key = (key or get_gemini_key() or "").strip()
+    if not key:
+        return False, "No hay clave guardada."
+    body = json.dumps({"contents": [{"parts": [{"text": "Responde solo: OK"}]}],
+                       "generationConfig": {"temperature": 0, "maxOutputTokens": 8}}).encode("utf-8")
+    last = "No se pudo conectar con Google."
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(
+            f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=20) as r:
+                json.load(r)
+            return True, f"La clave funciona ({model})."
+        except urllib.error.HTTPError as e:
+            last = {400: "Google rechazo la clave (revisa que este completa).",
+                    401: "Google rechazo la clave.", 403: "La clave no tiene permiso o esta bloqueada.",
+                    429: "Llegaste al limite gratis de Google. Espera un rato."}.get(
+                        e.code, f"Google respondio con error {e.code}.")
+            if e.code in (400, 401, 403, 429):
+                return False, last
+        except Exception:  # noqa: BLE001
+            continue
+    return False, last
+
+
 def gemini_listen(job_id, video, start, length, lang, jdir, idx):
     """Transcribe una muestra corta con Gemini (para PUNTUAR momentos, no para subtitulos).
     Manda audio comprimido a Google; solo se usa si el usuario lo activo (ai_listen).
@@ -2728,6 +2756,10 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
+        elif u.path == "/apikey/test":
+            body = self._body_json(2000) or {}
+            ok, msg = gemini_test(body.get("key") or None)
+            self._json({"ok": ok, "msg": msg})
         elif u.path == "/apikey":
             body = self._body_json(2000)
             ok = set_gemini_key((body or {}).get("key", ""))
