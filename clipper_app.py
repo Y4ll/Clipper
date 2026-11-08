@@ -1883,6 +1883,12 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             duration = float(len(energy))
         if duration <= 0:
             raise RuntimeError("No se pudo leer el video.")
+        cfg_p = load_settings()
+        if cfg_p.get("parts") and cfg_p.get("parts_auto") and length == int(cfg_p.get("len") or 0):
+            # partes automaticas: cada momento abarca su parte del video (hasta 10 min)
+            # y se corta en tantas partes como quepan, sin tope fijo
+            length = int(max(length * 2, min(600, duration / max(1, want))) // length * length)
+            job["note"] = f"Partes automáticas: momentos de {length // 60} min {length % 60} s."
         wave_data, step = waveform(energy)
         ENERGY[job_id] = energy
         note = "Momentos listos"
