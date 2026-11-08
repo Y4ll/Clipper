@@ -749,7 +749,7 @@ async function poll(id){
   try{d=await (await API("/status?id="+id)).json()}catch(e){setTimeout(()=>poll(id),1500);return}
   if(d.error){J.el.querySelector(".msg").textContent=d.error;return}
   update(J,d);
-  if(!["done","error","cancelled"].includes(d.state)&&!(d.state==="ready"&&S.review&&!J.rendered&&J.waiting))setTimeout(()=>poll(id),800);
+  if(!["done","error","cancelled"].includes(d.state)&&!(d.state==="ready"&&S.review&&!J.rendered&&J.waiting))setTimeout(()=>poll(id),document.hidden?3000:800);
   else if(d.state==="ready")setTimeout(()=>poll(id),1500);
 }
 function update(J,d){
