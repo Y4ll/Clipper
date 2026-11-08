@@ -119,6 +119,7 @@ LAST_PING = [0.0]
 JOBS = {}                 # id -> datos que ve la pagina
 RT = {}                   # id -> {cancel: Event, proc: Popen}
 ENERGY = {}               # id -> energia por segundo (para zoom en los picos)
+HEARD = {}                # id -> [(inicio, largo, idioma, palabras)] lo que ya oyo el analisis (se reutiliza al renderizar)
 ENCODER = {"name": None, "ready": False}
 HAS_ASS = [False]
 UPDATE = {"state": "idle", "available": False, "version": "", "url": "",
@@ -1074,6 +1075,31 @@ def transcribe(job_id, video, start, length, lang, jdir, idx, translate=False, f
     return parse_srt(srt.read_text(encoding="utf-8", errors="ignore"))
 
 
+def remember_heard(job_id, start, length, lang, cues):
+    """Guarda las palabras (con tiempos reales) que el analisis ya transcribio de un tramo."""
+    if cues:
+        HEARD.setdefault(job_id, []).append((float(start), float(length), lang, list(cues)))
+
+
+def heard_cues(job_id, start, length, lang, tol=1.5):
+    """Palabras ya transcritas que cubren este clip (con como mucho `tol` s sin cubrir en total).
+
+    Devuelve cues relativas al inicio del clip, o None si no hay nada util (entonces se transcribe)."""
+    best = None
+    for w_start, w_len, w_lang, cues in HEARD.get(job_id, []):
+        if w_lang != lang:
+            continue
+        missing = max(0.0, w_start - start) + max(0.0, (start + length) - (w_start + w_len))
+        if missing <= tol and (best is None or missing < best[0]):
+            best = (missing, w_start, cues)
+    if not best:
+        return None
+    off = start - best[1]
+    out = [(a - off, b - off, w) for a, b, w in best[2] if b - off > 0 and a - off < length]
+    out = [(max(0.0, a), min(float(length), b), w) for a, b, w in out]
+    return out or None
+
+
 def group_words(cues, per=3, gap=0.6):
     """Junta palabras sueltas en grupos cortos para mostrarlos juntos."""
     groups, cur = [], []
@@ -1350,6 +1376,8 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
             samp = min(m["len"], 90)
             st = m["start"] + (m["len"] - samp) / 2
             cues = groq_listen(job_id, video, st, samp, lang, jdir, 300 + i)   # tiempos reales por palabra
+            if cues:
+                remember_heard(job_id, st, samp, lang, cues)
             if cues is None:
                 cues = gemini_listen(job_id, video, st, samp, lang, jdir, 200 + i)
             return i, cues
@@ -1378,6 +1406,7 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
                 samp = min(m["len"], 90)
                 cues = transcribe(job_id, video, m["start"] + (m["len"] - samp) / 2, samp,
                                   lang, jdir, 100 + i, fast=True)
+                remember_heard(job_id, m["start"] + (m["len"] - samp) / 2, samp, lang, cues)
                 sc, snippet = speech_score(cues or [], samp)
                 if terms:
                     full = norm_text(" ".join(c[2] for c in (cues or [])))
@@ -2376,8 +2405,10 @@ def render_job(job_id, video, segments, o):
             heard = []
             if (o["subs"] or (o["ai_title"] and (get_gemini_key() or get_groq_key()))) and font:
                 try:
-                    got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i,
-                                     o["sub_translate"])
+                    got = None if o["sub_translate"] else heard_cues(job_id, start, length, o["sub_lang"])
+                    if got is None:
+                        got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i,
+                                         o["sub_translate"])
                     if got is None:
                         warn("Esta version no incluye subtitulos ni titulos con IA.")
                     else:
@@ -2526,6 +2557,7 @@ def render_job(job_id, video, segments, o):
             msg = str(e)[-300:] or "No se pudieron crear los clips."
         job.update(state="error", msg=msg)
     finally:
+        HEARD.pop(job_id, None)
         try:
             Path(video).unlink()
         except OSError:
