@@ -1105,6 +1105,98 @@ def norm_text(t):
     return "".join(c for c in unicodedata.normalize("NFKD", str(t).lower()) if not unicodedata.combining(c))
 
 
+GROQ_FILE = DATA_DIR / "groq.key"
+GROQ_BASE = "https://api.groq.com/openai/v1"
+
+
+def get_groq_key():
+    try:
+        return GROQ_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def set_groq_key(key):
+    key = (key or "").strip()
+    if not key:
+        GROQ_FILE.unlink(missing_ok=True)
+        return True
+    if not re.fullmatch(r"[A-Za-z0-9_.\-]{20,200}", key):
+        return False
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    GROQ_FILE.write_text(key, encoding="utf-8")
+    try:
+        os.chmod(GROQ_FILE, 0o600)
+    except OSError:
+        pass
+    return True
+
+
+def groq_test(key=None):
+    """Comprueba la clave de Groq pidiendo la lista de modelos (no gasta cuota). (ok, mensaje)"""
+    key = (key or get_groq_key() or "").strip()
+    if not key:
+        return False, "No hay clave de Groq guardada."
+    req = urllib.request.Request(f"{GROQ_BASE}/models", headers={
+        "Authorization": f"Bearer {key}", "User-Agent": "Clipper"})
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            json.load(r)
+        return True, "La clave de Groq funciona."
+    except urllib.error.HTTPError as e:
+        return False, {401: "Groq rechazo la clave (revisa que este completa).",
+                       403: "Groq bloqueo la peticion o la clave.",
+                       429: "Llegaste al limite gratis de Groq. Espera un rato."}.get(
+                           e.code, f"Groq respondio con error {e.code}.")
+    except Exception:  # noqa: BLE001
+        return False, "No se pudo conectar con Groq."
+
+
+def groq_listen(job_id, video, start, length, lang, jdir, idx):
+    """Whisper en la nube de Groq con tiempos por palabra. Devuelve cues [(ini, fin, palabra)] o None."""
+    key = get_groq_key()
+    if not key:
+        return None
+    mp3 = jdir / f"q{idx}.mp3"
+    try:
+        run_ffmpeg([FFMPEG, "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", str(start),
+                    "-t", str(length), "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                    "-b:a", "32k", str(mp3)], job_id=job_id)
+        audio = mp3.read_bytes()
+    except Cancelled:
+        raise
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        mp3.unlink(missing_ok=True)
+    if len(audio) > 24 * 1048576:
+        return None
+    bound = secrets.token_hex(12)
+    fields = [("model", "whisper-large-v3-turbo"), ("response_format", "verbose_json"),
+              ("timestamp_granularities[]", "word"), ("temperature", "0")]
+    if lang in ("es", "en"):
+        fields.append(("language", lang))
+    body = b"".join(f'--{bound}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode()
+                    for k, v in fields)
+    body += (f'--{bound}\r\nContent-Disposition: form-data; name="file"; filename="a.mp3"\r\n'
+             "Content-Type: audio/mpeg\r\n\r\n").encode() + audio + f"\r\n--{bound}--\r\n".encode()
+    req = urllib.request.Request(f"{GROQ_BASE}/audio/transcriptions", data=body, method="POST", headers={
+        "Authorization": f"Bearer {key}", "User-Agent": "Clipper",
+        "Content-Type": f"multipart/form-data; boundary={bound}"})
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r:
+            data = json.load(r)
+    except Exception:  # noqa: BLE001
+        return None
+    words = data.get("words")
+    if words:
+        return [(float(w.get("start", 0)), float(w.get("end", 0)), str(w.get("word", "")).strip())
+                for w in words if str(w.get("word", "")).strip()]
+    text = str(data.get("text", "")).split()
+    step = length / max(1, len(text))
+    return [(i * step, (i + 1) * step, w) for i, w in enumerate(text)]
+
+
 def gemini_test(key=None):
     """Prueba la clave con una pregunta minima. Devuelve (ok, mensaje)."""
     key = (key or get_gemini_key() or "").strip()
@@ -1183,7 +1275,7 @@ def gemini_listen(job_id, video, start, length, lang, jdir, idx):
 def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
     """Re-ordena los tramos candidatos escuchando lo que se dice en cada uno."""
     wh = find_whisper()
-    use_g = bool(load_settings().get("ai_listen")) and bool(get_gemini_key())
+    use_g = bool(load_settings().get("ai_listen")) and bool(get_gemini_key() or get_groq_key())
     if not wh and not use_g:
         return cands[:want], False
     top = max((m["score"] for m in cands), default=1.0) or 1.0
@@ -1194,8 +1286,11 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
         def one(i_m):
             i, m = i_m
             samp = min(m["len"], 90)
-            return i, gemini_listen(job_id, video, m["start"] + (m["len"] - samp) / 2, samp,
-                                    lang, jdir, 200 + i)
+            st = m["start"] + (m["len"] - samp) / 2
+            cues = groq_listen(job_id, video, st, samp, lang, jdir, 300 + i)   # tiempos reales por palabra
+            if cues is None:
+                cues = gemini_listen(job_id, video, st, samp, lang, jdir, 200 + i)
+            return i, cues
         with ThreadPoolExecutor(max_workers=4) as ex:
             for i, cues in ex.map(one, enumerate(cands, 1)):
                 if cues is not None:
@@ -2607,7 +2702,7 @@ class Handler(BaseHTTPRequestHandler):
                         "ytdlp": importlib.util.find_spec("yt_dlp") is not None,
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
-                        "gemini": bool(get_gemini_key())})
+                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
         elif u.path == "/streamers":
             self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
         elif u.path == "/youtube":
@@ -2791,6 +2886,14 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
+        elif u.path == "/groqkey/test":
+            body = self._body_json(2000) or {}
+            ok, msg = groq_test(body.get("key") or None)
+            self._json({"ok": ok, "msg": msg})
+        elif u.path == "/groqkey":
+            body = self._body_json(2000)
+            ok = set_groq_key((body or {}).get("key", ""))
+            self._json({"ok": ok} if ok else {"error": "La clave no parece valida."}, 200 if ok else 400)
         elif u.path == "/apikey/test":
             body = self._body_json(2000) or {}
             ok, msg = gemini_test(body.get("key") or None)

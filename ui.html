@@ -487,7 +487,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       </div>
       <div>
         <label class="ck"><input type="checkbox" id="ai_title"><span>IA: Título automático</span></label>
-        <label class="ck"><input type="checkbox" id="ai_listen"><span>IA escucha (Gemini, más rápido) <small>Manda 90 s de audio por momento a Google</small></span></label>
+        <label class="ck"><input type="checkbox" id="ai_listen"><span>IA escucha (Groq o Gemini, más rápido) <small>Manda 90 s de audio por momento a la nube</small></span></label>
         <label class="ck" id="aiRankRow" style="display:none"><input type="checkbox" id="ai_rank"><span>IA: Ranking</span></label>
         <label class="ck"><input type="checkbox" id="smart"><span>Modo inteligente<small id="smartNote">Escucha lo que se dice para elegir mejor</small></span></label>
         <label class="ck"><input type="checkbox" id="autosave"><span>Auto-guardar<small id="outDirTxt">Sin carpeta elegida</small></span></label>
@@ -506,6 +506,9 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <div class="lbl">Título y hashtags con IA (opcional): clave de Gemini</div>
       <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm" id="gtest">Probar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
       <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div>
+      <div class="lbl" style="margin-top:12px">IA que escucha (opcional): clave de Groq (Whisper en la nube, con tiempos por palabra)</div>
+      <div style="display:flex;gap:6px"><input type="password" id="qkey" placeholder="Pega tu clave de Groq aquí" autocomplete="off"><button class="btn sm" id="qsave">Guardar</button><button class="btn sm" id="qtest">Probar</button><button class="btn sm danger hidden" id="qdel">Quitar</button></div>
+      <div class="note" id="qnote">Sacas una gratis en console.groq.com/keys. Se guarda solo en tu PC. Con "IA escucha" activa se manda a Groq una muestra de audio de cada momento. Puedes tener Groq y Gemini a la vez: se usa Groq primero y Gemini de respaldo.</div>
       <div style="margin-top:10px"><div class="lbl">Tono del título</div><div class="chips" id="ai_tone"><button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
     </details>
   </section>
@@ -619,12 +622,12 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
-  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini;$("#ai_listen").disabled=!CAPS.gemini;
+  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini;$("#ai_listen").disabled=!(CAPS.gemini||CAPS.groq);$("#qdel").classList.toggle("hidden",!CAPS.groq);
   $("#aiRankRow").style.display=CAPS.gemini?"":"none";$("#ai_rank").disabled=!CAPS.gemini;
   document.querySelector('#pick [data-m=voz]').disabled=!CAPS.whisper;$("#pcIa").disabled=!(CAPS.gemini&&CAPS.whisper);
   if(!CAPS.whisper)document.querySelector('#pick [data-m=voz] span').textContent="No disponible: esta instalación no trae el modelo de voz.";
   if(CAPS.gemini)$("#pcIaNote").textContent="Gemini reordena los mejores momentos y pone título. Solo envía texto, nunca el video.";
-  if(CAPS.gemini)$("#gkey").placeholder="Clave guardada ✓";
+  if(CAPS.gemini)$("#gkey").placeholder="Clave guardada ✓";if(CAPS.groq)$("#qkey").placeholder="Clave guardada ✓";
   if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
 }
@@ -708,6 +711,12 @@ $("#gsave").onclick=async()=>{const k=$("#gkey").value.trim();if(!k)return;const
 $("#gtest").onclick=async()=>{const b=$("#gtest"),n=$("#gnote");b.disabled=true;n.textContent="Probando la clave...";
   try{const r=await post("/apikey/test",{key:$("#gkey").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"}
   catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
+$("#qsave").onclick=async()=>{const k=$("#qkey").value.trim();if(!k)return;const r=await post("/groqkey",{key:k});
+  if(r.error){alert(r.error);return}$("#qkey").value="";loadCaps()};
+$("#qtest").onclick=async()=>{const b=$("#qtest"),n=$("#qnote");b.disabled=true;n.textContent="Probando la clave...";
+  try{const r=await post("/groqkey/test",{key:$("#qkey").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"}
+  catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
+$("#qdel").onclick=async()=>{await post("/groqkey",{key:""});loadCaps()};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};
 /* ---------- actualizaciones ---------- */
 async function checkUpd(){
