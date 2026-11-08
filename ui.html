@@ -171,6 +171,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
 .mon{display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid #1c1f25;font-size:13px}
 .mon .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .mon small{color:var(--muted)}
+.mon .tplmon{max-width:140px;font-size:12px}
 .addrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin-top:10px}
 .addrow b{display:inline-block;min-width:38px;text-align:center;border:1px solid var(--line);border-radius:8px;background:#090a0d;padding:6px 8px;margin-left:4px}
 .badge{margin-left:auto;font-family:system-ui;font-style:normal;font-size:12px;font-weight:800;letter-spacing:.04em;color:var(--green);background:#0d2318;border:1px solid #1c5a3a;border-radius:6px;padding:3px 9px}
@@ -620,7 +621,7 @@ let TPLS={};
 async function loadTpls(sel){
   try{TPLS=(await (await API("/templates")).json()).templates||{}}catch(e){return}
   const s=$("#tplSel");s.innerHTML='<option value="">— ninguna —</option>'+Object.keys(TPLS).map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join("");
-  if(sel&&TPLS[sel])s.value=sel}
+  if(sel&&TPLS[sel])s.value=sel;loadMonitor()}
 $("#tplApply").onclick=()=>{const n=$("#tplSel").value,t=TPLS[n];if(!t)return;const p=JSON.parse(JSON.stringify(t));
   if(!CAPS.whisper){p.subs=false;p.smart=false;p.cut_pauses=false}
   Object.assign(S,p);paint();renderTexts();updateGen();persist();$("#tplNote").textContent="Plantilla aplicada: "+n};
@@ -676,6 +677,7 @@ $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
 const MON_SEEN=new Set();
 async function loadMonitor(){
   let d;try{d=await (await API("/streamers")).json()}catch(e){return}
+  if(document.activeElement&&document.activeElement.classList.contains("tplmon"))return;
   const list=d.streamers||[],box=$("#monList");
   const nLive=list.filter(x=>x.live&&x.enabled).length;
   $("#monCount").textContent=list.length;$("#liveBadge").classList.toggle("hidden",!nLive);$("#recDot").classList.toggle("live",nLive>0);
@@ -683,6 +685,10 @@ async function loadMonitor(){
   list.forEach(x=>{
     const r=document.createElement("div");r.className="mon";
     r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span class="nm" title="${esc(x.url)}">${esc(x.name||x.url)} <small>${x.live?("En vivo"+(x.segments>1?" · tramo "+x.segments:"")):(x.enabled?"Offline":"Pausado")}${x.note?" · "+esc(x.note):""}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
+    {const ts=document.createElement("select");ts.className="tplmon";ts.title="Plantilla de estilo para los clips automáticos de este canal";
+      ts.innerHTML='<option value="">Ajustes actuales</option>'+Object.keys(TPLS).map(n=>'<option value="'+esc(n)+'"'+(n===x.template?" selected":"")+'>'+esc(n)+'</option>').join("");
+      ts.onchange=async()=>{await post("/streamers/template",{url:x.url,template:ts.value});ts.blur();loadMonitor()};
+      r.insertBefore(ts,r.querySelector(".tg"))}
     r.querySelector(".tg").onclick=async()=>{await post("/streamers/toggle",{url:x.url,enabled:!x.enabled});loadMonitor()};
     r.querySelector(".rm").onclick=async()=>{await post("/streamers/delete",{url:x.url});loadMonitor()};
     box.appendChild(r);

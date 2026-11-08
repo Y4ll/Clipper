@@ -167,7 +167,8 @@ def load_streamers():
     for s in data if isinstance(data, list) else []:
         if isinstance(s, dict) and re.match(r"^https?://\S+$", str(s.get("url", ""))):
             out.append({"url": str(s["url"])[:300], "name": str(s.get("name") or "")[:60],
-                        "enabled": bool(s.get("enabled", True))})
+                        "enabled": bool(s.get("enabled", True)),
+                        "template": str(s.get("template") or "")[:40]})
     return out
 
 
@@ -212,6 +213,7 @@ def monitor_job_active(job_id):
 def monitor_start_segment(url, name, st):
     job_id = new_job(name or url)
     JOBS[job_id]["monitor"] = True
+    JOBS[job_id]["_template"] = next((x["template"] for x in load_streamers() if x["url"] == url), "") or None
     if st.get("segments"):
         JOBS[job_id]["_live_edge"] = True     # los tramos siguientes empiezan desde ahora, sin repetir
     with MONITOR_LOCK:
@@ -2218,6 +2220,9 @@ def auto_render(job_id, video, moments):
             JOBS[job_id].update(state="done", msg="Sin momentos fuertes en este tramo", pct=100)
             return
     cfg = dict(load_settings())
+    tpl_name = JOBS.get(par, {}).get("_template") if par else None
+    if tpl_name:   # este canal tiene su propia plantilla de estilo
+        cfg.update(load_templates().get(tpl_name) or {})
     cfg["autosave"] = True      # si hay carpeta de salida, se guardan ahi; si no, quedan para descargar
     cfg["yt_upload"] = bool(cfg.get("yt_auto")) and yt_connected()
     o = clean_opts(cfg)
@@ -3094,7 +3099,7 @@ class Handler(BaseHTTPRequestHandler):
             YT_TOKEN.update(value="", exp=0.0)
             YT_AUTH.update(status="idle", msg="")
             self._json({"ok": True})
-        elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete"):
+        elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete", "/streamers/template"):
             body = self._body_json() or {}
             items = load_streamers()
             if u.path == "/streamers/add":
@@ -3114,6 +3119,11 @@ class Handler(BaseHTTPRequestHandler):
                 url = str(body.get("url") or "")
                 if u.path == "/streamers/delete":
                     items = [x for x in items if x["url"] != url]
+                elif u.path == "/streamers/template":
+                    name = str(body.get("template") or "")[:40]
+                    for x in items:
+                        if x["url"] == url:
+                            x["template"] = name if name in load_templates() else ""
                 else:
                     for x in items:
                         if x["url"] == url:
