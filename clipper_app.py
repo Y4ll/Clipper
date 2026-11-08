@@ -190,6 +190,7 @@ def monitor_loop():
             # Cap = 0 para que record_live use 10 min por defecto y siga grabando
             rng = (0, None, 0)
             job_id = new_job(st["name"] or url)
+            JOBS[job_id]["monitor"] = True   # se renderiza solo al terminar el análisis
             st["job_id"] = job_id
             threading.Thread(target=analyze_job,
                              args=(job_id, None, url, want, length, rng, smart, snap),
@@ -1172,6 +1173,7 @@ def _live_clipper(job_id, out, state, opts):
         ts = datetime.datetime.now().strftime("%H:%M")
         child_name = f"{base_name[:40]} · {ts}"
         child_id = new_job(child_name)
+        JOBS[child_id]["monitor"] = True   # se renderiza solo al terminar el análisis
         child_jdir = WORK / child_id
         child_jdir.mkdir(parents=True, exist_ok=True)
         frag = child_jdir / "input.mp4"
@@ -1344,6 +1346,17 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=moments)
+        # Jobs del monitor: renderizar solos con los ajustes guardados
+        if job.get("monitor") and moments:
+            files = [f for f in jdir.glob("input.*") if f.suffix not in (".part", ".ytdl")]
+            if files:
+                st = load_settings()
+                o = clean_opts(st, seg_len=length)
+                o["autosave"] = True   # guardar siempre en la carpeta configurada
+                segs = [{"start": m["start"], "len": m["len"]} for m in moments]
+                threading.Thread(target=render_job,
+                                 args=(job_id, max(files, key=lambda f: f.stat().st_size), segs, o),
+                                 daemon=True).start()
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
