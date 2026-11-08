@@ -110,7 +110,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -1077,12 +1077,68 @@ def norm_text(t):
     return "".join(c for c in unicodedata.normalize("NFKD", str(t).lower()) if not unicodedata.combining(c))
 
 
+def gemini_listen(job_id, video, start, length, lang, jdir, idx):
+    """Transcribe una muestra corta con Gemini (para PUNTUAR momentos, no para subtitulos).
+    Manda audio comprimido a Google; solo se usa si el usuario lo activo (ai_listen).
+    Devuelve cues aproximadas [(ini, fin, palabra)] o None si falla (se usa Whisper)."""
+    key = get_gemini_key()
+    if not key:
+        return None
+    mp3 = jdir / f"g{idx}.mp3"
+    try:
+        run_ffmpeg([FFMPEG, "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-ss", str(start),
+                    "-t", str(length), "-i", str(video), "-vn", "-ac", "1", "-ar", "16000",
+                    "-b:a", "24k", str(mp3)], job_id=job_id)
+        audio = base64.b64encode(mp3.read_bytes()).decode()
+    except Cancelled:
+        raise
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        mp3.unlink(missing_ok=True)
+    langname = {"es": "espanol", "en": "ingles"}.get(lang, "el idioma que se hable")
+    body = json.dumps({"contents": [{"parts": [
+        {"text": f"Transcribe literalmente lo que se dice en este audio ({langname}). "
+                 "Devuelve solo el texto, sin comentarios. Si no hay voz, devuelve vacio."},
+        {"inline_data": {"mime_type": "audio/mp3", "data": audio}}]}],
+        "generationConfig": {"temperature": 0}}).encode("utf-8")
+    for model in GEMINI_MODELS:
+        req = urllib.request.Request(
+            f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
+            headers={"Content-Type": "application/json", "x-goog-api-key": key})
+        try:
+            with urllib.request.urlopen(req, timeout=40) as r:
+                text = json.load(r)["candidates"][0]["content"]["parts"][0].get("text", "")
+        except Exception:  # noqa: BLE001
+            continue
+        words = text.split()
+        step = length / max(1, len(words))
+        return [(i * step, (i + 1) * step, w) for i, w in enumerate(words)]
+    return None
+
+
 def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
     """Re-ordena los tramos candidatos escuchando lo que se dice en cada uno."""
     wh = find_whisper()
-    if not wh:
+    use_g = bool(load_settings().get("ai_listen")) and bool(get_gemini_key())
+    if not wh and not use_g:
         return cands[:want], False
     top = max((m["score"] for m in cands), default=1.0) or 1.0
+    pre = {}
+    if use_g:   # Gemini escucha varias muestras a la vez: segundos en vez de minutos
+        job.update(msg="La IA escucha los momentos...", pct=62)
+        from concurrent.futures import ThreadPoolExecutor
+        def one(i_m):
+            i, m = i_m
+            samp = min(m["len"], 90)
+            return i, gemini_listen(job_id, video, m["start"] + (m["len"] - samp) / 2, samp,
+                                    lang, jdir, 200 + i)
+        with ThreadPoolExecutor(max_workers=4) as ex:
+            for i, cues in ex.map(one, enumerate(cands, 1)):
+                if cues is not None:
+                    pre[i] = cues
+        if rt(job_id)["cancel"].is_set():
+            raise Cancelled()
     t0, limit = time.time(), 240          # maximo 4 min de analisis extra
     scored = []
     terms = [t for t in norm_text(query).split() if len(t) >= 3][:6]
@@ -1090,7 +1146,13 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
         job.update(msg=f"Escuchando los momentos... {i} de {len(cands)}",
                    pct=int(60 + 38 * i / len(cands)))
         sc, snippet, match = 0.0, "", False
-        if time.time() - t0 < limit:
+        if i in pre:
+            samp = min(m["len"], 90)
+            cues = pre[i]
+            sc, snippet = speech_score(cues, samp)
+            if terms:
+                match = any(t in norm_text(" ".join(c[2] for c in cues)) for t in terms)
+        elif wh and time.time() - t0 < limit:
             try:
                 # momentos largos (partes automaticas): se escucha solo una muestra del centro
                 samp = min(m["len"], 90)
