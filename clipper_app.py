@@ -108,7 +108,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
@@ -1284,7 +1284,7 @@ def clean_opts(raw, seg_len=120):
         "subs": bool(raw.get("subs")),
         "sub_lang": pick("sub_lang", ("es", "en", "auto"), "es"),
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
-        "fps": int(pick("fps", (0, 30, 60), 0)),
+        "fps": int(pick("fps", (0, 30, 60), 30)),
         "quality": pick("quality", ("fast", "best"), "fast"),
         "ai_title": bool(raw.get("ai_title")),
         "ai_tone": pick("ai_tone", ("directo", "gracioso", "dramatico", "misterioso", "epico"), "directo"),
