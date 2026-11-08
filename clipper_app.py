@@ -108,9 +108,9 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -1129,6 +1129,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
              "scale=1080:1920:flags=bilinear[bg];"
              "[b]scale=1080:-2[fg];"
              "[bg][fg]overlay=(W-w)/2:(H-h)/2[v0]")
+    if o["fps"] == 30:   # bajar a 30 fps al principio: todo lo demas procesa la mitad de cuadros en 60 fps
+        g = g.replace("[0:v]", "[0:v]fps=30,", 1)
     if keep:   # quitar pausas: solo pasan los tramos elegidos
         g = f"[0:v]select='{keep_expr(keep)}',setpts=N/FRAME_RATE/TB[sv];" + g.replace("[0:v]", "[sv]")
     state = {"last": "v0", "n": 0, "g": g}
@@ -1159,8 +1161,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
         else:
             cr = "crop=1080:1920"
         stage(sc + "," + cr)
-    if o["fps"] in (30, 60):
-        stage(f"fps={o['fps']}")
+    if o["fps"] == 60:
+        stage("fps=60")
     if logo_idx is not None:
         pos = {"tl": "40:140", "tr": "W-w-40:140", "bl": "40:H-h-330",
                "br": "W-w-40:H-h-330"}[o["logo_pos"]]
@@ -1282,7 +1284,7 @@ def clean_opts(raw, seg_len=120):
         "subs": bool(raw.get("subs")),
         "sub_lang": pick("sub_lang", ("es", "en", "auto"), "es"),
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
-        "fps": int(pick("fps", (0, 30, 60), 0)),
+        "fps": int(pick("fps", (0, 30, 60), 30)),
         "quality": pick("quality", ("fast", "best"), "fast"),
         "ai_title": bool(raw.get("ai_title")),
         "ai_tone": pick("ai_tone", ("directo", "gracioso", "dramatico", "misterioso", "epico"), "directo"),
@@ -1943,6 +1945,23 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="error", msg=str(e)[-300:] or "No se pudo analizar el video.")
 
 
+def save_extras(clip, dest, length, ai):
+    """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
+    try:
+        subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.5, length * 0.35):.2f}",
+                        "-i", str(clip), "-frames:v", "1", "-q:v", "3", str(Path(dest).with_suffix(".jpg"))],
+                       stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        pass
+    ai = ai or {}
+    if ai.get("title") or ai.get("desc") or ai.get("tags"):
+        try:
+            txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", []))) if x)
+            Path(dest).with_suffix(".txt").write_text(txt + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+
 def render_job(job_id, video, segments, o):
     job, jdir = JOBS[job_id], WORK / job_id
     state = rt(job_id)
@@ -2106,6 +2125,8 @@ def render_job(job_id, video, segments, o):
                     saved = str(dest)
                 except OSError:
                     warn(f"No se pudo guardar el clip {i} en la carpeta.")
+                else:
+                    save_extras(out, dest, out_len, ai)
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
