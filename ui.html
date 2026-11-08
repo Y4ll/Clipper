@@ -709,12 +709,12 @@ const persistNow=()=>{clearTimeout(saveT);return post("/settings",S)};
 $("#gsave").onclick=async()=>{const k=$("#gkey").value.trim();if(!k)return;const r=await post("/apikey",{key:k});
   if(r.error){alert(r.error);return}$("#gkey").value="";loadCaps()};
 $("#gtest").onclick=async()=>{const b=$("#gtest"),n=$("#gnote");b.disabled=true;n.textContent="Probando la clave...";
-  try{const r=await post("/apikey/test",{key:$("#gkey").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"}
+  try{const k=$("#gkey").value.trim(),r=await post("/apikey/test",{key:k});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;if(r.ok&&k){const s=await post("/apikey",{key:k});if(!s.error){$("#gkey").value="";n.textContent+=" Clave guardada.";loadCaps()}}n.style.color=r.ok?"var(--green)":"var(--red)"}
   catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
 $("#qsave").onclick=async()=>{const k=$("#qkey").value.trim();if(!k)return;const r=await post("/groqkey",{key:k});
   if(r.error){alert(r.error);return}$("#qkey").value="";loadCaps()};
 $("#qtest").onclick=async()=>{const b=$("#qtest"),n=$("#qnote");b.disabled=true;n.textContent="Probando la clave...";
-  try{const r=await post("/groqkey/test",{key:$("#qkey").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"}
+  try{const k=$("#qkey").value.trim(),r=await post("/groqkey/test",{key:k});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;if(r.ok&&k){const s=await post("/groqkey",{key:k});if(!s.error){$("#qkey").value="";n.textContent+=" Clave guardada.";loadCaps()}}n.style.color=r.ok?"var(--green)":"var(--red)"}
   catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
 $("#qdel").onclick=async()=>{await post("/groqkey",{key:""});loadCaps()};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};
