@@ -83,7 +83,7 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ASSET_DIR = DATA_DIR / "assets"
 KEY_FILE = DATA_DIR / "gemini.key"      # la clave va aparte de los ajustes y nunca se manda a la pagina
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_MODELS = ("gemini-2.5-flash", "gemini-flash-latest")
+GEMINI_MODELS = ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-flash-lite-latest")
 
 FFMPEG = "ffmpeg"
 LAN_MODE = False
