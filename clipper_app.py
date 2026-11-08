@@ -83,7 +83,35 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 ASSET_DIR = DATA_DIR / "assets"
 KEY_FILE = DATA_DIR / "gemini.key"      # la clave va aparte de los ajustes y nunca se manda a la pagina
 GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta"
-GEMINI_MODELS = ("gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-flash-lite-latest")
+GEMINI_MODELS = ("gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-2.5-flash",
+                 "gemini-2.5-flash-lite", "gemini-flash-latest")   # preferidos, en orden
+_GEMINI_CACHE = {}
+
+
+def gemini_models(key):
+    """Modelos que ESTA clave puede usar (Google restringe algunos a proyectos nuevos y manda a
+    modelos saturados). Se pregunta a Google y se ordena por preferencia; si falla, la lista fija."""
+    hit = _GEMINI_CACHE.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    order = list(GEMINI_MODELS)
+    try:
+        req = urllib.request.Request(f"{GEMINI_BASE}/models?pageSize=200",
+                                     headers={"x-goog-api-key": key})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.load(r)
+        have = [m["name"].split("/", 1)[-1] for m in data.get("models", [])
+                if "generateContent" in m.get("supportedGenerationMethods", [])]
+        bad = ("tts", "image", "live", "embedding", "preview", "exp", "audio", "robotics", "computer")
+        extra = [m for m in have if m.startswith("gemini-") and "flash" in m
+                 and not any(b in m for b in bad) and m not in GEMINI_MODELS]
+        pref = [m for m in GEMINI_MODELS if m in have]
+        if pref or extra:
+            order = pref + sorted(extra, reverse=True)
+    except Exception:  # noqa: BLE001
+        pass
+    _GEMINI_CACHE[key] = (time.time(), order)
+    return order
 
 FFMPEG = "ffmpeg"
 LAN_MODE = False
@@ -753,7 +781,7 @@ def gemini_title(text, lang, tone="directo"):
                        "generationConfig": {"responseMimeType": "application/json",
                                             "temperature": 0.7}}).encode("utf-8")
     last_err = None
-    for model in GEMINI_MODELS:
+    for model in gemini_models(key):
         req = urllib.request.Request(
             f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
             headers={"Content-Type": "application/json", "x-goog-api-key": key})
@@ -807,7 +835,7 @@ def gemini_rank(cands, want, length, job):
     body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
                        "generationConfig": {"responseMimeType": "application/json",
                                             "temperature": 0.3}}).encode("utf-8")
-    for model in GEMINI_MODELS:
+    for model in gemini_models(key):
         req = urllib.request.Request(
             f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
             headers={"Content-Type": "application/json", "x-goog-api-key": key})
@@ -1086,7 +1114,7 @@ def gemini_test(key=None):
                        "generationConfig": {"temperature": 0, "maxOutputTokens": 8}}).encode("utf-8")
     last = "No se pudo conectar con Google."
     busy = False
-    for model in [*GEMINI_MODELS, GEMINI_MODELS[0]]:   # el ultimo intento repite el primero (503 suele ser pasajero)
+    for model in [*gemini_models(key), gemini_models(key)[0]]:   # el ultimo intento repite el primero (503 suele ser pasajero)
         if busy:
             time.sleep(2)
         req = urllib.request.Request(
@@ -1137,7 +1165,7 @@ def gemini_listen(job_id, video, start, length, lang, jdir, idx):
                  "Devuelve solo el texto, sin comentarios. Si no hay voz, devuelve vacio."},
         {"inline_data": {"mime_type": "audio/mp3", "data": audio}}]}],
         "generationConfig": {"temperature": 0}}).encode("utf-8")
-    for model in GEMINI_MODELS:
+    for model in gemini_models(key):
         req = urllib.request.Request(
             f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
             headers={"Content-Type": "application/json", "x-goog-api-key": key})
