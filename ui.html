@@ -423,7 +423,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
     <label class="row"><svg class="ic"><use href="#i-image"/></svg><span>Subtítulos<small id="subNote">Los escribe tu PC, sin internet</small></span><input class="sw" type="checkbox" id="subs"></label>
     <label class="row" id="trBox"><svg class="ic"><use href="#i-trans"/></svg><span>Traducir subtítulos<small>Al inglés</small></span><input class="sw" type="checkbox" id="sub_translate"></label>
     <div class="fld" id="subStyleBox"><label for="sub_style"><svg class="ic" style="color:var(--yellow)"><use href="#i-text"/></svg> Estilo:</label>
-      <select id="sub_style"><option value="karaoke">Amarillo (palabra activa)</option><option value="one">Una palabra</option><option value="box">Caja</option><option value="clean">Blanco simple</option></select></div>
+      <select id="sub_style"><option value="karaoke">Amarillo (palabra activa)</option><option value="one">Una palabra</option><option value="box">Caja</option><option value="green">Verde (palabra activa)</option><option value="pop">Pop (palabra crece)</option><option value="red">Rojo (palabra activa)</option><option value="clean">Blanco simple</option></select></div>
     <details class="more"><summary>Idioma, textos y logo</summary>
       <div id="subLangBox"><div class="lbl">Idioma del video</div><div class="chips" id="sub_lang"><button class="chip" data-v="es">Español</button><button class="chip" data-v="en">Inglés</button><button class="chip" data-v="auto">Automático</button></div><hr></div>
       <div class="lbl" style="color:var(--yellow);font-weight:800">Textos con tiempo</div>
@@ -765,7 +765,7 @@ function update(J,d){
   (d.children||[]).forEach(cid=>{if(!MON_SEEN.has(cid)){MON_SEEN.add(cid);addJobCard(cid,"Lote del directo")}});
   if(d.state==="ready"&&d._auto_render&&J.view!=="ready"){J.view="ready";J.waiting=false}   // lote del directo: se corta solo
   else if(d.state==="ready"&&J.view!=="ready"){
-    J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||"",points:x.points||0,match:!!x.match}));J.waiting=S.review;
+    J.view="ready";J.segs=d.moments.map(x=>({start:x.start,len:x.len,text:x.text||"",points:x.points||0,why:x.why||"",match:!!x.match}));J.waiting=S.review;
     if(S.review)buildEditor(J,d);else startRender(J);
   }
   if(d.state==="rendering"&&J.view!=="rendering"){J.view="rendering";J.rendered=true;J.shown=0;el.querySelector(".body").innerHTML=""}
@@ -822,7 +822,7 @@ function buildEditor(J,d){
           e.style.left=(s.start/dur*100)+"%";const inp=rows.children[i]&&rows.children[i].querySelector(".st");if(inp)inp.value=s.start};
         e.onpointerup=()=>{e.onpointermove=null;layout()}};
       const r=document.createElement("div");r.className="segrow";
-      r.innerHTML=`<span class="n">${i+1}</span><span>${s.match?"✔ coincide con tu búsqueda · ":""}${s.points?`<b style="color:var(--yellow)">${s.points}</b> · `:""}${fmt(s.start)} → ${fmt(s.start+s.len)}${s.points&&s.points===Math.max(...J.segs.map(z=>z.points||0))?" · <b>CLIP ESTE PRIMERO</b>":""}<br><small style="color:var(--muted)">${esc(s.text||"")}</small></span><input class="st" type="number" min="0" max="${Math.floor(dur)}" step="1" value="${s.start}" title="Inicio (s)"><input class="ln" type="number" min="3" max="600" step="1" value="${s.len}" title="Duración (s)"><span class="b"><button class="btn sm pv">▶</button> <button class="btn sm danger rm">✕</button></span>`;
+      r.innerHTML=`<span class="n">${i+1}</span><span>${s.match?"✔ coincide con tu búsqueda · ":""}${s.points?`<b title="${esc(s.why||"")}" style="color:${s.points>=70?"var(--green)":s.points>=45?"var(--yellow)":"var(--red)"}">${s.points} ${s.points>=70?"ALTA":s.points>=45?"MEDIA":"BAJA"}</b> · `:""}${fmt(s.start)} → ${fmt(s.start+s.len)}${s.points&&s.points===Math.max(...J.segs.map(z=>z.points||0))?" · <b>CLIP ESTE PRIMERO</b>":""}<br><small style="color:var(--muted)">${esc(s.text||"")}</small></span><input class="st" type="number" min="0" max="${Math.floor(dur)}" step="1" value="${s.start}" title="Inicio (s)"><input class="ln" type="number" min="3" max="600" step="1" value="${s.len}" title="Duración (s)"><span class="b"><button class="btn sm pv">▶</button> <button class="btn sm danger rm">✕</button></span>`;
       r.querySelector(".st").onchange=ev=>{s.start=Math.max(0,Math.min(dur-1,+ev.target.value||0));layout()};
       r.querySelector(".ln").onchange=ev=>{s.len=Math.max(3,Math.min(600,+ev.target.value||30));layout()};
       r.querySelector(".pv").onclick=()=>{v.currentTime=s.start;stopAt=s.start+s.len;v.play().catch(()=>{})};

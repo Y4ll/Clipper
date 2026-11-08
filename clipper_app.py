@@ -614,7 +614,10 @@ def score_moments(moments, energy, smart_used):
             val = 0.5 * audio + 0.3 * m.get("speech", 0.0) + 0.1 * rise + 0.1 * dur
         else:
             val = 0.65 * audio + 0.2 * rise + 0.15 * dur
-        out.append(dict(m, points=int(round(max(1, min(100, val * 100))))))
+        why = "Volumen %d%% · Subida al inicio %d%% · Duración %d%%" % (audio * 100, rise * 100, dur * 100)
+        if smart_used:
+            why = "Habla %d%% · " % (m.get("speech", 0.0) * 100) + why
+        out.append(dict(m, points=int(round(max(1, min(100, val * 100)))), why=why))
     return out
 
 
@@ -1005,6 +1008,9 @@ def write_ass(path, cues, font, style="karaoke"):
         size, outline, bstyle, back = 76, 14, 3, "&H99000000"
     elif style == "clean":
         size, per = 78, 4
+    elif style in ("green", "pop", "red"):
+        size, per = 88, 3
+    hot_col = {"green": "&H0050E04A&", "red": "&H004040FF&"}.get(style, "&H0000C4F5&")   # BGR
     head = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n\n"
             "[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,"
             "BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,"
@@ -1028,8 +1034,9 @@ def write_ass(path, cues, font, style="karaoke"):
                 parts = []
                 for j, (_a, _b, w) in enumerate(grp):
                     hot = j == i and style != "clean"
-                    color = "&H0000C4F5&" if hot else "&H00FFFFFF&"   # BGR: amarillo F5C400
-                    parts.append("{\\c" + color + "}" + clean(w))
+                    color = hot_col if hot else "&H00FFFFFF&"   # BGR: amarillo F5C400
+                    grow = "{\\fscx118\\fscy118}" if (hot and style in ("pop", "green", "red")) else "{\\fscx100\\fscy100}"
+                    parts.append("{\\c" + color + "}" + grow + clean(w))
                 text = " ".join(parts)
             lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(end)},Default,,0,0,0,," + text)
     Path(path).write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
@@ -1280,7 +1287,7 @@ def clean_opts(raw, seg_len=120):
         "ai_title": bool(raw.get("ai_title")),
         "ai_tone": pick("ai_tone", ("directo", "gracioso", "dramatico", "misterioso", "epico"), "directo"),
         "res": int(pick("res", (720, 1080), 1080)), "punch": bool(raw.get("punch")),
-        "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean"), "karaoke"),
+        "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean", "green", "pop", "red"), "karaoke"),
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
