@@ -954,7 +954,7 @@ def parse_srt(text):
     return cues
 
 
-def transcribe(job_id, video, start, length, lang, jdir, idx, translate=False):
+def transcribe(job_id, video, start, length, lang, jdir, idx, translate=False, fast=False):
     wh = find_whisper()
     if not wh:
         return None
@@ -965,9 +965,20 @@ def transcribe(job_id, video, start, length, lang, jdir, idx, translate=False):
                 "-c:a", "pcm_s16le", str(wav)], job_id=job_id)
     prefix = jdir / f"w{idx}"
     threads = max(2, (os.cpu_count() or 4) // 2)
-    run_proc([str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-osrt", "-of", str(prefix),
-              "-ml", "1", "-sow", "-np", "-t", str(threads)] + (["-tr"] if translate else []), cwd=str(exe.parent), job_id=job_id)
+    base = [str(exe), "-m", str(model), "-f", str(wav), "-l", lang, "-osrt", "-of", str(prefix),
+            "-ml", "1", "-sow", "-np", "-t", str(threads)] + (["-tr"] if translate else [])
     srt = Path(str(prefix) + ".srt")
+    if fast:   # solo para puntuar momentos: decodificacion rapida (sin busqueda en haz ni reintentos)
+        try:
+            run_proc(base + ["-bs", "1", "-bo", "1", "-nf"], cwd=str(exe.parent), job_id=job_id)
+        except Cancelled:
+            raise
+        except Exception:  # noqa: BLE001
+            srt.unlink(missing_ok=True)
+        if not srt.is_file():   # si esa version de whisper no entiende las opciones: modo normal
+            run_proc(base, cwd=str(exe.parent), job_id=job_id)
+    else:
+        run_proc(base, cwd=str(exe.parent), job_id=job_id)
     if not srt.is_file():
         return []
     return parse_srt(srt.read_text(encoding="utf-8", errors="ignore"))
@@ -1084,7 +1095,7 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
                 # momentos largos (partes automaticas): se escucha solo una muestra del centro
                 samp = min(m["len"], 90)
                 cues = transcribe(job_id, video, m["start"] + (m["len"] - samp) / 2, samp,
-                                  lang, jdir, 100 + i)
+                                  lang, jdir, 100 + i, fast=True)
                 sc, snippet = speech_score(cues or [], samp)
                 if terms:
                     full = norm_text(" ".join(c[2] for c in (cues or [])))
