@@ -1413,56 +1413,68 @@ def _live_clipper(job_id, live_ctx, state, opts):
     por la mitad) hasta casi el final de lo grabado. Al terminar cada parte hace una ronda final
     de esa parte; al terminar el directo completo hace la ronda final global.
 
-    live_ctx es un dict compartido con record_live:
-      - "out"         : Path al archivo de la parte actual (se actualiza al cambiar de parte)
-      - "part_offset" : segundos grabados en partes anteriores (se acumula)
-      - "part_done"   : True mientras se espera que arranque la siguiente parte
+    live_ctx es un dict compartido con record_live (acceso protegido por live_ctx["lock"]):
+      - "out"          : Path al archivo de la parte actual
+      - "part_offset"  : segundos grabados en partes anteriores
+      - "part_ended"   : threading.Event — record_live lo activa al terminar cada parte
+      - "part_ready"   : threading.Event — _live_clipper lo activa al terminar la ronda final
     """
     length = int(opts["length"])
     clip_every = max(60, LIVE_CLIP_EVERY)
     min_needed = max(60, length * 2)
+    lock = live_ctx["lock"]
     done_until = 0.0   # relativo a la parte actual
     while not state["cancel"].is_set():
         time.sleep(2)
         job = JOBS.get(job_id)
         if not job:
             break
-        # Si el grabador esta entre partes, esperar a que arranque la siguiente
-        if live_ctx.get("part_done"):
-            continue
-        out = live_ctx["out"]
-        part_offset = float(live_ctx.get("part_offset", 0.0))
+
+        # Leer el contexto de la parte actual de forma atomica
+        with lock:
+            out = live_ctx["out"]
+            part_offset = float(live_ctx["part_offset"])
+            part_ended: threading.Event = live_ctx["part_ended"]
+            part_ready: threading.Event = live_ctx["part_ready"]
+
         cur = float(job.get("_rec_sec", 0) or 0)
         rec_done = bool(job.get("_rec_done"))
-        # _live_all_done indica que termino el directo entero (no solo una parte)
         all_done = bool(job.get("_live_all_done"))
+
         due = cur >= min_needed and cur - done_until >= clip_every
-        final = rec_done and cur - done_until >= 20
-        if rec_done and not final:
+        # "final": la parte termino Y hay material nuevo suficiente para analizar
+        final = part_ended.is_set() and cur - done_until >= 20
+
+        if part_ended.is_set() and not final:
             if all_done:
-                break     # directo terminado de verdad: salir
-            # parte terminada pero sin tramo suficiente para analizar: liberar y esperar la siguiente
-            if live_ctx.get("part_done"):
-                live_ctx["part_done"] = False
+                break
+            # Parte terminada pero tramo demasiado corto: liberar de todos modos
+            if not part_ready.is_set():
+                part_ready.set()
             continue
+
         if not (due or final):
             continue
+
         sec_end = max(0.0, cur - 2)
         sec_start = max(0.0, done_until - length)
         if sec_end - sec_start > LIVE_MAX_SPAN:
             sec_start = sec_end - LIVE_MAX_SPAN
         if sec_end - sec_start < 15:
-            if final and live_ctx.get("part_done"):
-                live_ctx["part_done"] = False   # nada que analizar en esta parte: liberar
+            if final and not part_ready.is_set():
+                part_ready.set()   # nada que analizar: liberar de todos modos
             continue
+
         spawn_live_child(job_id, out, sec_start, sec_end - sec_start, opts,
                          part_offset=part_offset)
         done_until = sec_end
+
         if final:
             if all_done:
-                break     # fin real del directo
-            # Ronda final de esta parte terminada: avisar a record_live para que continue
-            live_ctx["part_done"] = False
+                break
+            # Ronda final de esta parte terminada: avisar a record_live y preparar la siguiente
+            if not part_ready.is_set():
+                part_ready.set()
             done_until = 0.0
 
 
@@ -1490,8 +1502,17 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     job.update(live=True, msg="Conectando con el directo...", pct=3)
     job["name"] = title + ".mp4"
 
-    # Contexto compartido con _live_clipper: se actualiza al cambiar de parte
-    live_ctx: dict = {"out": jdir / "input_1.mp4", "part_offset": 0.0, "part_done": False}
+    # Contexto compartido con _live_clipper.
+    # "lock" protege las actualizaciones atomicas de out/part_offset al cambiar de parte.
+    # "part_ended" : record_live lo activa cuando la parte termina de grabarse.
+    # "part_ready" : _live_clipper lo activa cuando termino la ronda final de esa parte.
+    live_ctx: dict = {
+        "lock": threading.Lock(),
+        "out": jdir / "input_1.mp4",
+        "part_offset": 0.0,
+        "part_ended": threading.Event(),
+        "part_ready": threading.Event(),
+    }
     job["_live_out"] = str(live_ctx["out"])   # para /clipnow
 
     def build(out_path, bsf, oldest=True, reconn=True, part_num=1):
@@ -1520,9 +1541,11 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
         while not state["cancel"].is_set():
             part_num += 1
             out = jdir / f"input_{part_num}.mp4"
-            live_ctx["out"] = out
-            live_ctx["part_offset"] = part_offset
-            live_ctx["part_done"] = False
+            with live_ctx["lock"]:
+                live_ctx["out"] = out
+                live_ctx["part_offset"] = part_offset
+                live_ctx["part_ended"] = threading.Event()   # nuevo evento: esta parte aun no termino
+                live_ctx["part_ready"] = threading.Event()   # _live_clipper aun no termino su ronda
             job["_live_out"] = str(out)
             job["_part_offset_snapshot"] = part_offset   # para /clipnow
             job["_rec_sec"] = 0.0
@@ -1611,9 +1634,9 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                 job["msg"] = (f"El directo no respondio, probando otra forma "
                               f"({n + 2}/{len(variants)})...")
 
-            # Marcar esta parte como terminada (para que _live_clipper haga la ronda final)
-            live_ctx["part_done"] = True
+            # Marcar esta parte como terminada: _live_clipper hara su ronda final
             job["_rec_done"] = True
+            live_ctx["part_ended"].set()
 
             if state["cancel"].is_set():
                 break
@@ -1635,17 +1658,11 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             sec_recorded = float(job.get("_rec_sec", 0) or 0)
             part_offset += sec_recorded
 
-            # Esperar a que _live_clipper termine la ronda final de esta parte
-            # (da hasta 2 min; en casos de directos muy cortos puede no haber nada que analizar)
-            wait_start = time.time()
-            while time.time() - wait_start < 120:
-                time.sleep(2)
-                # Si ya no queda nada pendiente de analizar de esta parte, continuar
-                if not live_ctx.get("part_done"):
-                    break
-                # _live_clipper activa part_done=False cuando arranca la siguiente ronda
-            else:
-                live_ctx["part_done"] = False   # timeout: continuar de todos modos
+            # Esperar a que _live_clipper termine la ronda final de esta parte (max 2 min)
+            # part_ready se activa cuando el clipper termino de analizar o no habia nada
+            part_ready_ev: threading.Event = live_ctx["part_ready"]
+            part_ready_ev.wait(timeout=120)
+            # (si expira el timeout seguimos igualmente: no bloqueamos el directo)
 
             # Comprobar si el directo sigue en vivo
             if job.get("_stop_requested"):
@@ -1655,11 +1672,10 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
 
             # Solo seguir si el directo esta en vivo (y no se puso un limite manual)
             if given:
-                # El usuario queria un maximo fijo: no seguir
                 job["_live_all_done"] = True
                 break
 
-            job.update(msg=f"Comprobando si el directo sigue en vivo...", pct=5)
+            job.update(msg="Comprobando si el directo sigue en vivo...", pct=5)
             still_live = streamer_is_live(meta.get("webpage_url") or meta.get("url") or "")
             if not still_live:
                 job.update(msg="El directo ha terminado.", pct=100)
@@ -1670,13 +1686,31 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             job.update(msg=f"El directo sigue. Arrancando parte {part_num + 1}...", pct=5)
             # La siguiente parte empieza desde el borde en vivo (no rebobinar)
             job["_live_edge"] = True
-            # Borrar la parte anterior una vez que _live_clipper la ha procesado
-            # (esperamos 10 s por si hay algun spawn en marcha)
-            time.sleep(10)
+
+            # Borrar la parte anterior solo cuando no queden hijos activos que la usen
+            # (hijos "activos" = en estado queued/analyzing/rendering)
             prev_out = jdir / f"input_{part_num}.mp4"
             if prev_out.is_file() and prev_out != first_out:
+                children_of_part = [
+                    cid for cid in JOBS.get(job_id, {}).get("children", [])
+                    if float(JOBS.get(cid, {}).get("_abs_offset", -1)) >= (part_offset - sec_recorded)
+                    and float(JOBS.get(cid, {}).get("_abs_offset", -1)) < part_offset
+                ]
+                # Esperar hasta 3 min a que todos los hijos de esta parte terminen
+                wait_start = time.time()
+                while time.time() - wait_start < 180:
+                    still_active = [
+                        cid for cid in children_of_part
+                        if JOBS.get(cid, {}).get("state") in ("queued", "analyzing", "rendering")
+                    ]
+                    if not still_active:
+                        break
+                    time.sleep(5)
                 try:
                     prev_out.unlink()
+                    with open(logf, "a", encoding="utf-8") as lf:
+                        lf.write(f"parte {part_num}: archivo borrado "
+                                 f"(offset {part_offset - sec_recorded:.0f}s - {part_offset:.0f}s)\n")
                 except OSError:
                     pass
 
