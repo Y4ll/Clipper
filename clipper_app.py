@@ -1761,6 +1761,28 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             # La siguiente parte empieza desde el borde en vivo (no rebobinar)
             job["_live_edge"] = True
 
+            # partes que quedaron pendientes de borrar: se borran si ya nadie las usa
+            if job.get("_keep_parts") and not any(
+                    JOBS.get(c, {}).get("state") in ("queued", "analyzing", "rendering")
+                    for c in job.get("children", [])):
+                for fp in job.pop("_keep_parts"):
+                    try:
+                        Path(fp).unlink(missing_ok=True)
+                    except OSError:
+                        pass
+            # poco espacio en disco: se para limpiamente en vez de fallar a mitad de parte
+            try:
+                free_gb = shutil.disk_usage(jdir).free / 1e9
+            except OSError:
+                free_gb = 99
+            if free_gb < 2.0:
+                job.update(msg=f"Grabación detenida: quedan {free_gb:.1f} GB libres en el disco.", pct=100)
+                job.setdefault("warnings", []).append(
+                    f"Se detuvo la grabación por falta de espacio ({free_gb:.1f} GB libres). "
+                    "Libera disco y vuelve a empezar.")
+                job["_live_all_done"] = True
+                break
+
             # Borrar la parte anterior solo cuando no queden hijos activos que la usen
             # (hijos "activos" = en estado queued/analyzing/rendering)
             prev_out = jdir / f"input_{part_num}.mp4"
@@ -1780,10 +1802,18 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                     if not still_active:
                         break
                     time.sleep(5)
+                if still_active:   # un hijo aun lo usa: no se borra, se intenta mas tarde
+                    job.setdefault("_keep_parts", []).append(str(prev_out))
+                    job.setdefault("warnings", []).append(
+                        f"La parte {part_num} sigue en uso; se borrará cuando termine.")
+                    continue_delete = False
+                else:
+                    continue_delete = True
                 try:
-                    prev_out.unlink()
+                    if continue_delete:
+                        prev_out.unlink()
                     with open(logf, "a", encoding="utf-8") as lf:
-                        lf.write(f"parte {part_num}: archivo borrado "
+                        lf.write(f"parte {part_num}: {'borrada' if continue_delete else 'se conserva (en uso)'} "
                                  f"(offset {part_offset - sec_recorded:.0f}s - {part_offset:.0f}s)\n")
                 except OSError:
                     pass
