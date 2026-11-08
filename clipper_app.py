@@ -2823,8 +2823,8 @@ def run_native_window(url):
                         "developer.microsoft.com/microsoft-edge/webview2/consumer")
                 return False
         api = Api()
-        win = webview.create_window("Clipper | Shadow Mode", url, js_api=api, width=980,
-                                    height=1000, min_size=(420, 600), background_color="#08090c")
+        win = webview.create_window("Clipper | Shadow Mode", url, js_api=api, width=1280,
+                                    height=800, min_size=(420, 600), background_color="#08090c")
         api._window = win
         try:
             webview.settings["ALLOW_DOWNLOADS"] = True
@@ -2866,7 +2866,7 @@ def open_app_window(url):
         try:
             subprocess.Popen(
                 [exe, "--app=" + url, "--user-data-dir=" + str(WORK / "perfil"),
-                 "--window-size=980,1000", "--no-first-run", "--no-default-browser-check"],
+                 "--window-size=1280,800", "--no-first-run", "--no-default-browser-check"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except OSError:

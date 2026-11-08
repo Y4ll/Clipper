@@ -5,75 +5,204 @@
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Clipper | Shadow Mode</title>
 <style>
-:root{--yellow:#f5c400;--black:#08090c;--panel:#111318;--panel2:#191c22;--line:#30343c;--text:#f3f3ed;--muted:#92969f;--red:#ff5d5d;--green:#4ade80;--display:Anton,Impact,"Arial Narrow Bold",sans-serif}
+:root{--yellow:#f5c400;--yellow2:#ffd83a;--gold:#a58200;--black:#050608;--bg:#08090c;--panel:#0e1014;--panel2:#15181d;--line:#2a2e36;--liney:#5b4b08;--text:#f3f3ed;--muted:#92969f;--red:#ff4d4d;--green:#3ddc84;--display:Anton,Impact,"Arial Narrow Bold",sans-serif;--glow:0 0 18px rgba(245,196,0,.16)}
 *{box-sizing:border-box}
-html{scrollbar-color:#30343c #08090c}
-body{margin:0;min-height:100vh;color:var(--text);background:radial-gradient(ellipse at 50% 0%,#24252b 0%,transparent 45%),linear-gradient(180deg,#111319,#08090c 70%);font-family:system-ui,-apple-system,"Segoe UI",sans-serif}
+html{scrollbar-color:#3a3d44 #08090c;scroll-behavior:smooth}
+body{margin:0;min-height:100vh;color:var(--text);background:var(--bg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;font-size:14px;line-height:1.35}
 button,input,select{font:inherit;color:inherit}
-button:focus-visible,input:focus-visible,select:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
-.wrap{max-width:900px;margin:0 auto;padding:18px 18px 60px}
-.topbar{display:flex;align-items:center;gap:12px;padding:6px 0 14px}
-.brand{font-family:var(--display);font-size:30px;letter-spacing:.06em;color:var(--yellow);text-transform:uppercase}
-.brand small{font-family:system-ui;font-size:11px;color:var(--muted);letter-spacing:.2em;margin-left:8px}
-.sp{flex:1}
-.pill{font-size:12px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:4px 10px;background:var(--panel)}
-.pill.on{color:var(--yellow);border-color:#6b5700}
-.banner{display:none;align-items:center;gap:12px;border:1px solid #6b5700;background:#1d1900;border-radius:10px;padding:10px 14px;margin-bottom:14px;font-size:14px}
+button{cursor:pointer}
+:focus-visible{outline:2px solid var(--yellow);outline-offset:2px}
+.ic{width:1.25em;height:1.25em;flex:none;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round;vertical-align:-.22em}
+.hidden{display:none!important}
+.vh{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+.disp{font-family:var(--display);font-style:italic;text-transform:uppercase;letter-spacing:.02em;font-weight:400}
+
+/* ---------- cabecera ---------- */
+.app{max-width:1600px;margin:0 auto;min-height:100vh;display:flex;flex-direction:column}
+.top{position:relative;display:grid;grid-template-columns:230px 1fr 260px;align-items:center;gap:14px;padding:14px 18px 12px;min-height:150px;overflow:hidden;background:linear-gradient(180deg,#0d0e11,#08090c)}
+.art{position:absolute;right:250px;top:0;bottom:0;width:40%;opacity:.95;pointer-events:none;z-index:0}
+.logo,.tag,.sys{z-index:1}
+.art svg{width:100%;height:100%}
+.logo{position:relative;display:flex;align-items:center;gap:10px}
+.logo .crown{width:42px;height:42px;color:var(--yellow);filter:drop-shadow(0 0 8px rgba(245,196,0,.45))}
+.logo b{display:block;font-size:44px;line-height:.95;color:var(--yellow);text-shadow:0 2px 0 #7a5f00,0 0 22px rgba(245,196,0,.3)}
+.logo small{display:block;font-size:12px;letter-spacing:.42em;color:#fff;font-weight:800;margin-top:4px;padding-left:2px}
+.tag{position:relative;text-align:center;transform:skewX(-8deg)}
+.tag span{display:block;font-family:var(--display);font-size:22px;letter-spacing:.04em;color:#fff;text-shadow:0 2px 6px #000}
+.tag b{display:block;font-family:var(--display);font-weight:400;font-size:clamp(40px,5.4vw,70px);line-height:.95;color:var(--yellow);text-shadow:0 3px 0 #7a5f00,0 0 28px rgba(245,196,0,.4)}
+.sys{position:relative;justify-self:end;display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;border:1px solid var(--liney);border-radius:12px;background:rgba(10,11,14,.85);padding:10px 14px;max-width:260px}
+.sys .dot{width:14px;height:14px;border-radius:50%;background:var(--green);box-shadow:0 0 10px var(--green);flex:none}
+.sys b{font-family:var(--display);font-style:italic;font-weight:400;letter-spacing:.03em;color:var(--green);font-size:15px;text-transform:uppercase}
+.sys small{display:block;color:var(--text);font-size:12px;border-top:1px solid var(--line);margin-top:3px;padding-top:3px}
+.pill{font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:99px;padding:2px 8px;background:var(--panel)}
+.pill.on{color:var(--yellow);border-color:var(--liney)}
+
+/* ---------- estructura ---------- */
+.body{display:grid;grid-template-columns:190px minmax(0,1fr);gap:14px;padding:0 18px 14px;flex:1}
+.side{display:flex;flex-direction:column;gap:8px}
+.nav{display:flex;align-items:center;gap:12px;width:100%;padding:13px 14px;border-radius:10px;border:1px solid var(--line);background:linear-gradient(180deg,#14161b,#0e1014);color:var(--text);font-weight:700;font-size:15px;text-align:left;transition:border-color .15s,background .15s}
+.nav .ic{font-size:22px;color:var(--yellow)}
+.nav:hover{border-color:var(--liney)}
+.nav.on{background:linear-gradient(180deg,#ffd83a,#e5b800);color:#15130a;border-color:#ffe066;box-shadow:var(--glow)}
+.nav.on .ic{color:#15130a}
+.nav .rd{width:22px;height:22px;border-radius:50%;background:var(--red);flex:none}
+.brandcard{margin-top:auto;border:1px solid var(--liney);border-radius:12px;background:linear-gradient(180deg,#12100a,#0b0a07);padding:14px 10px;text-align:center}
+.brandcard .emb{width:84px;height:62px;margin:0 auto 6px;color:var(--yellow);filter:drop-shadow(0 0 10px rgba(245,196,0,.35))}
+.brandcard b{display:block;color:var(--yellow);font-size:17px}
+.brandcard small{display:block;color:var(--text);font-size:12px}
+.main{min-width:0}
+.banner{display:none;align-items:center;gap:12px;border:1px solid var(--liney);background:linear-gradient(90deg,#1d1900,#14120a);border-radius:12px;padding:10px 14px;margin-bottom:12px;font-size:15px}
 .banner.show{display:flex}
 .banner span{flex:1}
-.hero{text-align:center;padding:10px 0 18px}
-.hero h1{font-family:var(--display);font-weight:400;font-size:clamp(34px,7vw,60px);line-height:1;margin:0 0 8px;text-transform:uppercase;letter-spacing:.02em}
-.hero h1 b{color:var(--yellow);font-weight:400}
-.hero p{margin:0;color:var(--muted)}
-.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:16px;margin-bottom:14px}
-.label{font-size:11px;letter-spacing:.18em;text-transform:uppercase;color:var(--yellow);margin:0 0 10px;font-weight:700}
-.drop{border:2px dashed #4a4d55;border-radius:14px;padding:30px 16px;text-align:center;cursor:pointer;background:var(--panel2);transition:.15s}
-.drop:hover,.drop.over{border-color:var(--yellow);background:#1d1b10}
-.drop b{display:block;font-size:18px;margin-bottom:4px}
-.drop span{color:var(--muted);font-size:13px}
-.urlrow{display:flex;gap:8px;margin-top:12px}
-.urlrow input{flex:1;min-width:0}
-input[type=text],input[type=number],select{background:#0c0e12;border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%}
-input[type=number]{width:84px}
-input[type=range]{accent-color:var(--yellow)}
+.intro{display:none;border:1px solid var(--liney);background:var(--panel);border-radius:12px;padding:14px 16px;margin-bottom:12px}
+.intro p{margin:0 0 8px}
+
+/* ---------- paneles ---------- */
+.grid{display:grid;grid-template-columns:repeat(24,minmax(0,1fr));gap:12px}
+.panel{position:relative;background:linear-gradient(180deg,#101216,#0b0c10);border:1px solid var(--liney);border-radius:12px;padding:14px 16px;box-shadow:var(--glow),inset 0 0 0 1px rgba(255,255,255,.02);min-width:0}
+.panel.flash{animation:flash .9s ease}
+@keyframes flash{0%,100%{box-shadow:var(--glow)}40%{box-shadow:0 0 0 2px var(--yellow),0 0 30px rgba(245,196,0,.5)}}
+.panel h2{margin:0 0 12px;display:flex;align-items:center;gap:10px;font-family:var(--display);font-style:italic;font-weight:400;font-size:20px;letter-spacing:.02em;color:var(--yellow);text-transform:uppercase}
+.panel h2 .ic{font-size:26px;color:var(--yellow)}
+.p-video{grid-column:span 17}.p-live{grid-column:span 7}
+.p-qty{grid-column:span 7}.p-fmt{grid-column:span 5}.p-fx{grid-column:span 6}.p-subs{grid-column:span 6}
+.p-yt{grid-column:span 11}.p-adv{grid-column:span 8}.p-gen{grid-column:span 5}
+.lbl,label.lbl{display:block;font-size:14px;color:var(--text);margin:0 0 6px}
 .note{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
-.field label{display:block;font-size:12px;color:var(--muted);margin-bottom:5px}
-.chips{display:flex;gap:6px;flex-wrap:wrap}
-.chip{border:1px solid var(--line);background:#0c0e12;border-radius:8px;padding:8px 12px;cursor:pointer;font-size:14px}
-.chip.on{background:var(--yellow);color:#111;border-color:var(--yellow);font-weight:700}
-.chip[disabled]{opacity:.4;cursor:not-allowed}
-.tog{display:flex;align-items:center;gap:10px;padding:8px 0;cursor:pointer;user-select:none}
-.tog input{width:18px;height:18px;accent-color:var(--yellow)}
-.tog small{color:var(--muted);display:block;font-size:12px}
-.btn{border:0;border-radius:10px;padding:11px 18px;cursor:pointer;font-weight:700;background:var(--panel2);border:1px solid var(--line)}
+.err{color:var(--red)}
+details.more{margin-top:10px;border-top:1px solid var(--line);padding-top:8px}
+details.more>summary{cursor:pointer;list-style:none;color:var(--muted);font-size:13px;font-weight:700;display:flex;align-items:center;gap:6px;user-select:none}
+details.more>summary::before{content:"▸";color:var(--yellow)}
+details.more[open]>summary::before{content:"▾"}
+details.more[open]>summary{margin-bottom:10px;color:var(--text)}
+hr{border:0;border-top:1px solid var(--line);margin:12px 0}
+
+/* ---------- controles ---------- */
+input[type=text],input[type=password],input[type=number],select{background:#090a0d;border:1px solid var(--line);border-radius:8px;padding:9px 10px;width:100%;min-width:0}
+input::placeholder{color:#686c75}
+select{appearance:none;background-image:linear-gradient(45deg,transparent 50%,var(--yellow) 50%),linear-gradient(135deg,var(--yellow) 50%,transparent 50%);background-position:calc(100% - 15px) 52%,calc(100% - 10px) 52%;background-size:5px 5px;background-repeat:no-repeat;padding-right:28px}
+select option{background:#14161b}
+input[type=range]{accent-color:var(--yellow);width:100%}
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;border-radius:9px;padding:10px 16px;font-weight:800;background:var(--panel2);border:1px solid var(--line);transition:border-color .15s,filter .15s}
 .btn:hover{border-color:var(--yellow)}
-.btn.go{background:var(--yellow);color:#111;border-color:var(--yellow);font-family:var(--display);font-weight:400;font-size:18px;letter-spacing:.06em;text-transform:uppercase}
+.btn.go{background:linear-gradient(180deg,#ffd83a,#e8b900);color:#15130a;border-color:#ffe066}
 .btn.go:hover{filter:brightness(1.08)}
+.btn.ghost{background:transparent;border-color:var(--yellow);color:var(--yellow)}
 .btn.danger{color:var(--red);border-color:#5a2a2a}
 .btn.sm{padding:6px 10px;font-size:13px;border-radius:8px}
 .btn[disabled]{opacity:.4;cursor:not-allowed}
-details.card>summary{cursor:pointer;font-weight:700;list-style:none;display:flex;align-items:center;gap:8px}
-details.card>summary::before{content:"▸";color:var(--yellow)}
-details.card[open]>summary::before{content:"▾"}
-details.card[open]>summary{margin-bottom:14px}
-.textrow{display:grid;grid-template-columns:1fr 70px 70px 34px;gap:6px;margin-bottom:6px;align-items:center}
-.textrow input[type=number]{width:100%}
-.job{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+.chips{display:flex;gap:6px;flex-wrap:wrap}
+.chip{border:1px solid var(--line);background:#090a0d;border-radius:8px;padding:7px 11px;font-size:13px}
+.chip:hover{border-color:var(--liney)}
+.chip.on{background:var(--yellow);color:#15130a;border-color:var(--yellow);font-weight:800}
+.chip[disabled]{opacity:.4;cursor:not-allowed}
+.sw{appearance:none;-webkit-appearance:none;flex:none;width:42px;height:22px;border-radius:99px;background:#33363d;position:relative;cursor:pointer;transition:background .15s;margin:0}
+.sw::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#e9e9e4;transition:transform .15s}
+.sw:checked{background:var(--yellow)}
+.sw:checked::after{transform:translateX(20px);background:#15130a}
+.sw:disabled{opacity:.4;cursor:not-allowed}
+.row{display:flex;align-items:center;gap:10px;padding:6px 0;cursor:pointer;user-select:none}
+.row>.ic{font-size:20px;color:var(--yellow)}
+.row>span{flex:1;min-width:0}
+.row small{display:block;color:var(--muted);font-size:11px;line-height:1.25}
+.ck{display:flex;align-items:flex-start;gap:8px;padding:3px 0;cursor:pointer;user-select:none;font-size:13px}
+.ck input{width:16px;height:16px;accent-color:var(--yellow);margin:1px 0 0;flex:none}
+.ck small{display:block;color:var(--muted);font-size:11px}
+.fld{display:grid;grid-template-columns:auto 1fr;gap:8px;align-items:center;margin:6px 0}
+.fld>label{font-size:13px;color:var(--text);white-space:nowrap}
+
+/* video */
+.vid{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:18px}
+.drop{height:100%;min-height:176px;border:2px dashed #565a63;border-radius:12px;padding:14px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;text-align:center;cursor:pointer;background:rgba(255,255,255,.015);transition:.15s}
+.drop:hover,.drop.over{border-color:var(--yellow);background:#16140a}
+.drop .big{width:54px;height:54px;color:var(--yellow);stroke-width:1.5;filter:drop-shadow(0 0 8px rgba(245,196,0,.35))}
+.drop b{font-size:22px;line-height:1.1}
+.drop>span{color:var(--muted)}
+.exts{display:flex;gap:8px;margin:4px 0}
+.exts i{font-style:normal;font-size:11px;border:1px solid #565a63;border-radius:6px;padding:2px 9px;color:#d7d8d2}
+.linkcol{border-left:1px solid var(--line);padding-left:18px;display:flex;flex-direction:column;gap:10px}
+.urlrow{display:flex;align-items:center;gap:8px}
+.urlrow .ic{font-size:26px;color:var(--yellow)}
+.linkcol>.btn{font-family:var(--display);font-style:italic;font-weight:400;font-size:22px;letter-spacing:.03em;text-transform:uppercase;padding:9px}
+.rng{display:grid;grid-template-columns:1fr 1fr;gap:8px 10px}
+.rng label{display:flex;align-items:center;gap:8px;font-size:14px}
+.rng input{width:100%}
+.rng .wide{grid-column:1/-1}
+
+/* cantidad */
+.qty{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.qty .stp{padding:0 12px;text-align:center}
+.qty .stp+.stp{border-left:1px solid var(--line)}
+.stp label{display:block;font-size:14px;margin-bottom:8px;text-align:left}
+.stp .st{display:flex;align-items:center;justify-content:center;gap:6px}
+.stb{width:34px;height:34px;border-radius:8px;border:1px solid var(--line);background:var(--panel2);font-size:22px;font-weight:800;color:var(--yellow);line-height:1}
+.stb:hover{border-color:var(--yellow)}
+.stp .val{min-width:64px;white-space:nowrap;text-align:center;border:1px solid var(--line);border-radius:8px;background:#090a0d;padding:7px 8px;font-size:22px;font-weight:800}
+.stp small{display:block;color:var(--muted);margin-top:6px;font-size:12px}
+.presets{margin-top:12px}
+.presets .chip{font-size:12px;padding:6px 8px;white-space:nowrap}
+
+/* formato */
+.fmt{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.fmtc{display:flex;flex-direction:column;align-items:center;gap:1px;padding:9px 6px;border-radius:10px;background:linear-gradient(180deg,#1a1c21,#111318);text-align:center}
+.fmtc .ic{font-size:22px;color:#cfd0ca}
+.fmtc b{font-size:16px;line-height:1.1;font-weight:800}
+.fmtc small{font-size:11px;color:var(--yellow);font-weight:700}
+.fmtc.on{background:linear-gradient(180deg,#221d06,#15120a);color:var(--text);border-color:var(--yellow);box-shadow:0 0 14px rgba(245,196,0,.3)}
+.fmtc.on .ic{color:var(--yellow)}
+
+/* efectos */
+.fxlist{max-height:150px;overflow-y:auto;padding-right:8px;scrollbar-width:thin;scrollbar-color:var(--yellow) #14161b}
+.fxlist::-webkit-scrollbar{width:6px}.fxlist::-webkit-scrollbar-thumb{background:var(--yellow);border-radius:9px}
+.musicbox{border-top:1px solid var(--line);margin-top:6px;padding-top:8px}
+
+/* directos */
+.livebox{height:158px;border:1px solid var(--line);border-radius:10px;background:radial-gradient(ellipse at 50% 40%,#17140a,#07080a 70%);overflow-y:auto;padding:8px;scrollbar-width:thin}
+.empty{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px}
+.empty .ic{width:62px;height:62px;color:var(--yellow);stroke-width:1.4;filter:drop-shadow(0 0 8px rgba(245,196,0,.35))}
+.empty b{font-family:var(--display);font-style:italic;font-weight:400;font-size:20px;letter-spacing:.03em;color:var(--red);text-transform:uppercase}
+.mon{display:flex;align-items:center;gap:8px;padding:5px 4px;border-bottom:1px solid #1c1f25;font-size:13px}
+.mon .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mon small{color:var(--muted)}
+.addrow{display:grid;grid-template-columns:auto 1fr auto;gap:8px;align-items:center;margin-top:10px}
+.addrow b{display:inline-block;min-width:38px;text-align:center;border:1px solid var(--line);border-radius:8px;background:#090a0d;padding:6px 8px;margin-left:4px}
+.badge{margin-left:auto;font-family:system-ui;font-style:normal;font-size:12px;font-weight:800;letter-spacing:.04em;color:var(--green);background:#0d2318;border:1px solid #1c5a3a;border-radius:6px;padding:3px 9px}
+.recdot{width:20px;height:20px;border-radius:50%;background:var(--red);flex:none}
+.recdot.live{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{50%{opacity:.35}}
+
+/* youtube / ajustes */
+.yt{display:grid;grid-template-columns:1.1fr 1fr;gap:16px}
+.yt .btn.go{width:100%;margin-top:8px}
+.adv{display:grid;grid-template-columns:1.05fr 1fr;gap:14px}
+.gen{display:flex;flex-direction:column}
+.p-gen{padding:0;background:none;border:0;box-shadow:none}
+#btnGen{flex:1;min-height:128px;width:100%;border-radius:14px;border:2px solid #ffe066;background:linear-gradient(180deg,#ffdd44,#e3b200 70%,#c99f00);color:#15130a;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;box-shadow:0 0 30px rgba(245,196,0,.32),inset 0 -6px 0 rgba(0,0,0,.14);transition:filter .15s,transform .1s}
+#btnGen:hover{filter:brightness(1.07)}
+#btnGen:active{transform:translateY(1px)}
+#btnGen .ic{font-size:44px;stroke-width:1.6;fill:#15130a}
+#btnGen b{font-family:var(--display);font-style:italic;font-weight:400;font-size:28px;white-space:nowrap;letter-spacing:.02em;text-transform:uppercase;line-height:1}
+#btnGen small{font-size:14px;font-weight:700}
+
+/* cola y resultados */
+.queue{margin-top:16px}
+.queue h3{font-family:var(--display);font-style:italic;font-weight:400;text-transform:uppercase;color:var(--yellow);font-size:20px;margin:0 0 10px;display:flex;align-items:center;gap:10px}
+.job{background:linear-gradient(180deg,#101216,#0b0c10);border:1px solid var(--liney);border-radius:12px;padding:14px;margin-bottom:12px}
 .jobhead{display:flex;align-items:center;gap:10px}
-.jobname{flex:1;min-width:0;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.jobname{flex:1;min-width:0;font-weight:800;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .state{font-size:12px;color:var(--muted)}
-.bar{height:8px;border-radius:99px;background:#0c0e12;border:1px solid var(--line);overflow:hidden;margin:10px 0 4px}
+.bar{height:8px;border-radius:99px;background:#090a0d;border:1px solid var(--line);overflow:hidden;margin:10px 0 4px}
 .bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#a58200,var(--yellow));transition:width .3s}
 .msg{font-size:13px;color:var(--muted)}
-.err{color:var(--red)}
 .warn{font-size:12px;color:#e8c65a;margin-top:6px}
 .editor video{width:100%;max-height:300px;background:#000;border-radius:10px;margin-bottom:10px}
-.wave{position:relative;height:90px;background:#0c0e12;border:1px solid var(--line);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair;margin-bottom:6px}
+.wave{position:relative;height:90px;background:#090a0d;border:1px solid var(--line);border-radius:10px;overflow:hidden;touch-action:none;cursor:crosshair;margin-bottom:6px}
 .wave canvas{position:absolute;inset:0;width:100%;height:100%}
 .seg{position:absolute;top:0;bottom:0;background:rgba(245,196,0,.28);border-left:2px solid var(--yellow);border-right:2px solid var(--yellow);cursor:grab}
 .seg span{position:absolute;top:2px;left:4px;font-size:11px;font-weight:700;color:#111;background:var(--yellow);border-radius:4px;padding:0 4px}
 .head{position:absolute;top:0;bottom:0;width:2px;background:#fff;pointer-events:none}
+.textrow{display:grid;grid-template-columns:1fr 70px 70px 34px;gap:6px;margin-bottom:6px;align-items:center}
+.textrow input[type=number]{width:100%}
 .segrow{display:grid;grid-template-columns:26px 1fr 80px 80px auto;gap:6px;align-items:center;margin-bottom:6px;font-size:13px}
 .segrow input{width:100%}
 .segrow .n{font-weight:700;color:var(--yellow)}
@@ -83,188 +212,302 @@ details.card[open]>summary{margin-bottom:14px}
 .clip video{width:100%;aspect-ratio:9/16;background:#000;border-radius:8px;object-fit:contain}
 .clip .meta{display:flex;justify-content:space-between;align-items:center;font-size:12px;color:var(--muted);margin:6px 0}
 .clip a,.clip button{display:block;text-align:center;text-decoration:none;width:100%}
-.footer{text-align:center;color:var(--muted);font-size:12px;margin-top:26px}
-.hidden{display:none!important}
-@media(max-width:560px){.segrow{grid-template-columns:22px 1fr 1fr}.segrow .b{grid-column:1/-1}}
+
+/* pie */
+.foot{display:flex;align-items:center;gap:14px;padding:8px 18px;border-top:1px solid var(--line);background:#06070a;color:var(--muted);font-size:13px}
+.eq{display:flex;align-items:center;gap:2px;height:22px;flex:none}
+.eq i{display:block;width:3px;border-radius:2px;background:var(--yellow);opacity:.85}
+.foot .sp{flex:1}
+.foot b{font-family:var(--display);font-style:italic;font-weight:400;color:var(--yellow);font-size:15px;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+
+/* ---------- adaptación a ventanas más pequeñas ---------- */
+@media(max-width:1250px){
+  .top{grid-template-columns:200px 1fr 220px}
+  .p-video{grid-column:span 24}.p-live{grid-column:span 12}.p-qty{grid-column:span 12}
+  .p-fmt{grid-column:span 12}.p-fx{grid-column:span 12}.p-subs{grid-column:span 12}
+  .p-yt{grid-column:span 24}.p-adv{grid-column:span 14}.p-gen{grid-column:span 10}
+}
+@media(max-width:980px){
+  .body{grid-template-columns:1fr}
+  .side{flex-direction:row;overflow-x:auto;gap:6px;padding-bottom:4px}
+  .nav{width:auto;white-space:nowrap;padding:10px 12px;font-size:14px}
+  .brandcard{display:none}
+  .top{grid-template-columns:1fr;text-align:center;justify-items:center}
+  .art{right:0;width:100%;opacity:.45}.sys{justify-self:center}
+  .p-live,.p-qty,.p-fmt,.p-fx,.p-subs,.p-adv,.p-gen{grid-column:span 24}
+}
+@media(max-width:620px){
+  .vid,.yt,.adv{grid-template-columns:1fr}
+  .linkcol{border-left:0;padding-left:0}
+  .qty{grid-template-columns:1fr;gap:14px}.qty .stp+.stp{border-left:0;border-top:1px solid var(--line);padding-top:12px}
+  .segrow{grid-template-columns:22px 1fr 1fr}.segrow .b{grid-column:1/-1}
+  .logo b{font-size:36px}
+}
+@media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;scroll-behavior:auto!important}}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <div class="topbar">
-    <div class="brand">Clipper<small>SHADOW MODE</small></div>
-    <div class="sp"></div>
-    <span class="pill" id="pEnc">Procesador</span>
-    <span class="pill" id="pSub">Sin subtítulos</span>
-  </div>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false"><defs>
+<symbol id="i-clap" viewBox="0 0 24 24"><rect x="3" y="9" width="18" height="11" rx="1.5"/><path d="M3 9l2.4-5 3.6.9-2.4 4.1M9 4.9l3.6.9-2.2 3.2M12.6 5.8l3.6.9-2.1 2.3M16.2 6.7L21 8"/></symbol>
+<symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18a4 4 0 0 1-.6-7.96A6 6 0 0 1 18 9.5 4.5 4.5 0 0 1 17.5 18H7z"/><path d="M12 16v-6M9.5 12.2L12 9.6l2.5 2.6"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
+<symbol id="i-rocket" viewBox="0 0 24 24"><path d="M12 3c3 2 5 5 5 9l-2 3H9l-2-3c0-4 2-7 5-9z"/><circle cx="12" cy="10" r="1.6"/><path d="M9 15l-3 3M15 15l3 3M10.5 19l1.5 2 1.5-2"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2.5" width="10" height="19" rx="2.2"/><path d="M11 18.5h2"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="M4 18l5-5 4 4 3-3 4 4"/></symbol>
+<symbol id="i-bolt" viewBox="0 0 24 24"><path d="M13 2L5 13h6l-1 9 8-12h-6z"/></symbol>
+<symbol id="i-zoom" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="M16 16l5 5M8.5 11h5M11 8.5v5"/></symbol>
+<symbol id="i-shake" viewBox="0 0 24 24"><path d="M5 8l-2 4 2 4M19 8l2 4-2 4"/><rect x="8" y="7" width="8" height="10" rx="1.5"/></symbol>
+<symbol id="i-star" viewBox="0 0 24 24"><path d="M12 3l2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+<symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v5M12 16v5M3 12h5M16 12h5M6 6l3 3M15 15l3 3M18 6l-3 3M9 15l-3 3"/></symbol>
+<symbol id="i-cut" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2.5"/><circle cx="6" cy="18" r="2.5"/><path d="M8 7.5L20 18M8 16.5L20 6"/></symbol>
+<symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></symbol>
+<symbol id="i-trans" viewBox="0 0 24 24"><path d="M4 6h8M8 4v2M6 6c0 4 3 7 6 8M11 6c-1 4-4 7-7 8M13 20l4-9 4 9M14.5 17h5"/></symbol>
+<symbol id="i-text" viewBox="0 0 24 24"><path d="M5 6h14M12 6v13"/></symbol>
+<symbol id="i-yt" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="4"/><path d="M10 9l5 3-5 3z" style="fill:currentColor"/></symbol>
+<symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M5.3 5.3l2.1 2.1M16.6 16.6l2.1 2.1M18.7 5.3l-2.1 2.1M7.4 16.6l-2.1 2.1"/></symbol>
+<symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+<symbol id="i-crown" viewBox="0 0 24 24"><path d="M3 18l1.5-10 5 5 2.5-8 2.5 8 5-5L21 18z" style="fill:currentColor"/><path d="M3 21h18"/></symbol>
+<symbol id="i-radar" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2" style="fill:currentColor"/><path d="M7.6 7.6a6.2 6.2 0 0 0 0 8.8M16.4 7.6a6.2 6.2 0 0 1 0 8.8M4.6 4.6a10.4 10.4 0 0 0 0 14.8M19.4 4.6a10.4 10.4 0 0 1 0 14.8"/></symbol>
+<symbol id="i-music" viewBox="0 0 24 24"><path d="M9 18V6l10-2v12"/><circle cx="7" cy="18" r="2.2"/><circle cx="17" cy="16" r="2.2"/></symbol>
+<symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
+<symbol id="i-prog" viewBox="0 0 24 24"><rect x="3" y="10" width="18" height="4" rx="2"/><path d="M5 12h8"/></symbol>
+<symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/></symbol>
+<symbol id="i-crop" viewBox="0 0 24 24"><path d="M6 2v14h16M2 6h14v16"/></symbol>
+<symbol id="i-blur" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><circle cx="12" cy="12" r="8.5" style="stroke-dasharray:2 3"/></symbol>
+<symbol id="i-cam" viewBox="0 0 24 24"><rect x="3" y="7" width="13" height="10" rx="2"/><path d="M16 11l5-3v8l-5-3z"/></symbol>
+<symbol id="i-emb" viewBox="0 0 84 62"><path d="M42 3l30 9v22c0 14-12 23-30 27C24 57 12 48 12 34V12z" style="fill:#14110a;stroke:currentColor;stroke-width:2.4;stroke-linejoin:round"/><path d="M42 12l21 6v15c0 10-8 17-21 21-13-4-21-11-21-21V18z" style="fill:none;stroke:currentColor;stroke-width:1.2;opacity:.55"/><path d="M52 24h-9a8 8 0 0 0 0 16h9" style="fill:none;stroke:currentColor;stroke-width:5;stroke-linecap:round"/></symbol>
+</defs></svg>
 
-  <div class="banner" id="banner"><span id="bannerText">Hay una versión nueva de Clipper.</span><button class="btn sm go" id="btnUpd" style="font-size:14px">Actualizar</button></div>
+<div class="app">
+<header class="top">
+  <div class="logo"><svg class="ic crown" aria-hidden="true"><use href="#i-crown"/></svg><div><b class="disp">Clipper</b><small>SHADOW MODE</small></div></div>
+  <div class="tag"><span>DEL VIDEO LARGO AL</span><b>CLIP VIRAL</b></div>
+  <div class="art" aria-hidden="true"><svg viewBox="0 0 640 170" preserveAspectRatio="xMaxYMid slice"><defs>
+    <radialGradient id="moon" cx=".5" cy=".5" r=".5"><stop offset="0" stop-color="#ffe066" stop-opacity=".95"/><stop offset=".35" stop-color="#f5c400" stop-opacity=".45"/><stop offset="1" stop-color="#f5c400" stop-opacity="0"/></radialGradient>
+    <linearGradient id="beam" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#f5c400" stop-opacity=".0"/><stop offset="1" stop-color="#f5c400" stop-opacity=".28"/></linearGradient></defs>
+    <circle cx="400" cy="56" r="92" fill="url(#moon)"/>
+    <polygon points="250,170 292,0 330,0 300,170" fill="url(#beam)"/><polygon points="520,170 560,0 596,0 566,170" fill="url(#beam)"/>
+    <g fill="#07080a"><path d="M0 170V118h26V96h22v22h18V70h30v30h20V88h26v22h24V60h34v40h22V104h28V84h30v26h20V92h24V50h38v52h22V112h26V80h34v34h24V98h28V66h32v60h20V104h30v66z"/></g>
+    <g fill="#f5c400" opacity=".7"><rect x="88" y="78" width="4" height="5"/><rect x="104" y="112" width="4" height="5"/><rect x="202" y="72" width="4" height="5"/><rect x="262" y="110" width="4" height="5"/><rect x="372" y="64" width="4" height="5"/><rect x="452" y="94" width="4" height="5"/><rect x="548" y="82" width="4" height="5"/></g></svg></div>
+  <div class="sys"><i class="dot"></i><div><b>Sistema activo</b><small>v<span class="buildtxt"></span></small></div><span class="pill" id="pEnc">Procesador</span><span class="pill" id="pSub">Sin subtítulos</span></div>
+</header>
 
-  <div class="card" id="intro" style="display:none;border-color:#6b5700">
-    <p class="label">Bienvenido a Clipper</p>
-    <p style="margin:0 0 8px"><b>Arrastra un video aquí abajo o pega un link</b> (YouTube, Kick…). Clipper encuentra los mejores momentos y te los deja en vertical. Revisas, cortas y descargas.</p>
+<div class="body">
+<nav class="side" aria-label="Secciones">
+  <button class="nav on" data-go="p-video"><svg class="ic"><use href="#i-clap"/></svg>Video</button>
+  <button class="nav" data-go="p-live"><i class="rd"></i>Directos</button>
+  <button class="nav" data-go="p-fmt"><svg class="ic"><use href="#i-phone"/></svg>Formato</button>
+  <button class="nav" data-go="p-fx"><svg class="ic"><use href="#i-bolt"/></svg>Efectos</button>
+  <button class="nav" data-go="p-subs"><svg class="ic"><use href="#i-chat"/></svg>Subtítulos e IA</button>
+  <button class="nav" data-go="p-yt"><svg class="ic" style="color:var(--red)"><use href="#i-yt"/></svg>YouTube</button>
+  <button class="nav" data-go="p-adv"><svg class="ic"><use href="#i-gear"/></svg>Ajustes</button>
+  <div class="brandcard"><svg class="emb" viewBox="0 0 84 62" aria-hidden="true"><use href="#i-emb"/></svg><b class="disp">Clipper</b><small>v<span class="buildtxt"></span></small><small>By Y4ll</small></div>
+</nav>
+
+<main class="main">
+  <div class="banner" id="banner"><span id="bannerText">Hay una versión nueva de Clipper.</span><button class="btn sm go" id="btnUpd">Actualizar</button></div>
+  <div class="intro" id="intro">
+    <p class="disp" style="color:var(--yellow);font-size:20px;margin-bottom:6px">Bienvenido a Clipper</p>
+    <p><b>Arrastra un video o pega un link</b> (YouTube, Kick…). Clipper encuentra los mejores momentos y te los deja en vertical. Revisas, cortas y descargas.</p>
     <p class="note" style="margin:0 0 12px">Si Windows bloquea Clipper al abrirlo: clic en <b>Más información → Ejecutar de todas formas</b>, o añade una exclusión en Seguridad de Windows. Pasa porque el programa no tiene firma digital (es de pago); no hace nada raro y todo se procesa en tu PC.</p>
-    <button class="btn go" id="introOk" style="font-size:15px;padding:9px 16px">Entendido</button>
-  </div>
-  <div class="hero">
-    <h1>Del video largo al <b>clip viral</b></h1>
-    <p>Detecta los mejores momentos y los deja en vertical 9:16. Gratis, en tu PC.</p>
+    <button class="btn go sm" id="introOk">Entendido</button>
   </div>
 
-  <div class="card">
-    <p class="label">1 · Tu video</p>
-    <div class="drop" id="drop"><b>Suelta tus videos aquí o haz clic</b><span>Puedes elegir varios: se procesan en cola · MP4, MOV, MKV, WEBM</span></div>
-    <input type="file" id="file" accept="video/*" multiple class="hidden">
-    <div class="urlrow" id="urlrow">
-      <input type="text" id="url" placeholder="…o pega el link de un video (YouTube, etc.)" autocomplete="off">
-      <button class="btn" id="btnUrl">Traer</button>
-    </div>
-    <div class="field" style="margin-top:10px"><label>Buscar un momento (opcional)</label>
-      <input type="text" id="query" maxlength="80" placeholder="Ej: cuando habla del tráiler, la pelea, el gol…" autocomplete="off">
-      <div class="note" id="queryNote">Escucha los tramos más fuertes y sube los que mencionan esas palabras. Necesita Whisper y tarda más en analizar.</div></div>
-    <div class="grid" id="rangeBox" style="margin-top:10px">
-      <div class="field"><label>Solo los últimos (minutos) · en directo: cuánto grabar</label><input type="number" id="lastMin" min="0" placeholder="Todo el video" title="Solo descarga esa parte final del stream o VOD"></div>
-      <div class="field"><label>O desde el minuto / hasta el minuto</label><div style="display:flex;gap:6px"><input type="number" id="fromMin" min="0" placeholder="desde"><input type="number" id="toMin" min="0" placeholder="hasta"></div></div>
-    </div>
-    <label class="tog" style="margin-top:8px"><input type="checkbox" id="live_clips"><span>Sacar clips automáticamente mientras graba<small>Solo funciona en directos. Cada <select id="clip_every_min" style="width:auto;display:inline-block;padding:2px 6px" onclick="event.stopPropagation()"><option value="3">3 min</option><option value="15">15 min</option><option value="30">30 min</option></select> analiza lo nuevo y corta los mejores momentos solos. Usa los controles de arriba («Cantidad de clips» y «Duración de cada clip») para ajustar cuántos clips saca en cada ronda y cuánto duran. Graba en tramos de 60 min hasta que el directo termine solo (sin límite de horas). Hay un botón «Clip ya» para guardar los últimos segundos al instante y «Parar de grabar» para terminar cuando quieras.</small></span></label>
-    <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo sin clips automáticos, graba hasta 10 minutos (o los que pongas) y puedes parar cuando quieras con «Analizar lo grabado ya». Con clips automáticos graba todo el directo en tramos y termina solo. Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
-  </div>
-
-  <details class="card" id="monitorCard">
-    <summary class="label" style="cursor:pointer">Monitor de directos <span class="note" id="monCount"></span></summary>
-    <p class="note">Clipper revisa estos canales cada 2 minutos. Si uno entra en directo, graba en tramos de 60 min hasta que termine y saca clips solos todo el rato. Clipper tiene que estar abierto.</p>
-    <div style="display:flex;gap:6px;margin-top:8px"><input type="text" id="monUrl" placeholder="Usuario o link (kick.com/…)" autocomplete="off" maxlength="300"><button class="btn" id="monAdd">Añadir</button></div>
-    <div id="monList" style="margin-top:8px"></div>
-  </details>
-
-  <details class="card" id="ytCard">
-    <summary class="label" style="cursor:pointer">Subir a YouTube Shorts <span class="note" id="ytState"></span></summary>
-    <p class="note">Usa la API oficial de Google con tu cuenta. Una sola vez: en console.cloud.google.com crea un proyecto, activa «YouTube Data API v3» y crea una credencial «ID de cliente de OAuth» tipo <b>App de escritorio</b>; pega aquí el ID y el secreto.</p>
-    <div class="grid" style="margin-top:8px"><input type="text" id="ytId" placeholder="ID de cliente" autocomplete="off"><input type="password" id="ytSecret" placeholder="Secreto de cliente" autocomplete="off"></div>
-    <div style="display:flex;gap:6px;margin-top:8px"><button class="btn sm" id="ytSave">Guardar</button><button class="btn sm go" id="ytConnect" style="font-size:14px">Conectar con Google</button><button class="btn sm danger hidden" id="ytOff">Desconectar</button></div>
-    <p class="note" id="ytMsg"></p>
-    <label class="tog" style="margin-top:8px"><input type="checkbox" id="yt_auto"><span>Subir solos los clips de directos<small>Solo los clips que salen de «clips automáticos» y del monitor. Máximo 10 al día.</small></span></label>
-    <div class="field" style="margin-top:8px"><label>Visibilidad al subir</label><select id="yt_privacy"><option value="private">Privado (recomendado para probar)</option><option value="unlisted">No listado</option><option value="public">Público</option></select></div>
-    <p class="note">Subir muchos clips repetidos de un mismo streamer puede hacer que YouTube marque el canal. Usa solo contenido tuyo o con permiso.</p>
-  </details>
-
-  <div class="card">
-    <p class="label">2 · Formato</p>
-    <div class="field"><label>Preajuste de un clic</label>
-      <div class="chips" id="presets1">
-        <button class="chip" data-p="kick" title="Juego arriba, cámara abajo, subtítulos y gancho">Kick / GTA</button>
-        <button class="chip" data-p="cam" title="Recorte lleno, para streamers con la cámara a pantalla completa">Solo facecam</button>
-        <button class="chip" data-p="talk" title="Fondo borroso, clips más largos, subtítulos">Charla / podcast</button>
-        <button class="chip" data-p="hype" title="Zoom, vibración y gancho, clips cortos">Máximo hype</button>
-      </div></div>
-    <div class="field"><label>Plataforma</label>
-      <div class="chips" id="preset">
-        <button class="chip" data-v="tiktok">TikTok · 30 s</button>
-        <button class="chip" data-v="reels">Reels · 30 s</button>
-        <button class="chip" data-v="shorts">Shorts · 45 s</button>
-        <button class="chip" data-v="custom">Personalizado</button>
-      </div></div>
-    <div class="grid" style="margin-top:12px">
-      <div class="field"><label>Cantidad de clips: <b id="nv">5</b></label><input type="range" id="n" min="1" max="20" value="5"></div>
-      <div class="field"><label>Duración de cada clip: <b id="lv">30</b> s</label><input type="range" id="len" min="5" max="90" step="1" value="30"></div>
-    </div>
-    <div class="field" style="margin-top:12px"><label>Cómo se ve</label>
-      <div class="chips" id="mode">
-        <button class="chip" data-v="blur">Fondo borroso</button>
-        <button class="chip" data-v="crop">Recorte lleno</button>
-        <button class="chip" data-v="split">Pantalla dividida</button>
-        <button class="chip" data-v="cam" title="Gameplay arriba y tu cámara abajo, sacada del mismo video">Juego + cámara</button>
+  <div class="grid">
+  <!-- 1 · VIDEO -->
+  <section class="panel p-video" id="p-video">
+    <h2><svg class="ic"><use href="#i-clap"/></svg>1. Video</h2>
+    <div class="vid">
+      <div class="drop" id="drop" role="button" tabindex="0" aria-label="Soltar o elegir videos">
+        <svg class="ic big"><use href="#i-cloud"/></svg>
+        <b>Suelta tu video aquí</b><span>o selecciona un archivo (puedes elegir varios)</span>
+        <div class="exts"><i>MP4</i><i>MOV</i><i>MKV</i><i>WEBM</i></div>
+        <span class="btn ghost sm"><svg class="ic"><use href="#i-folder"/></svg>Seleccionar Archivo</span>
       </div>
-      <div id="camBox" class="hidden" style="margin-top:10px">
-        <div class="note" style="margin:0 0 8px">Gameplay arriba y tu cámara abajo, recortada del mismo video. Elige en qué esquina está tu cámara y su tamaño.</div>
-        <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
-          <div id="camPrev" style="position:relative;width:160px;height:90px;background:#0c0e12;border:1px solid var(--line);border-radius:6px"><div id="camRect" style="position:absolute;background:rgba(245,196,0,.35);border:2px solid var(--yellow)"></div></div>
-          <div><div class="chips" id="cam_corner"><button class="chip" data-v="tl">↖</button><button class="chip" data-v="tr">↗</button><button class="chip" data-v="bl">↙</button><button class="chip" data-v="br">↘</button></div>
-          <div class="field" style="margin-top:8px"><label>Tamaño de la cámara: <b id="csv">28</b>%</label><input type="range" id="cam_size" min="10" max="50" value="28"></div></div>
+      <input type="file" id="file" accept="video/*" multiple class="hidden">
+      <div class="linkcol">
+        <div><label class="lbl" for="url">O pega un enlace:</label>
+          <div class="urlrow" id="urlrow"><svg class="ic"><use href="#i-link"/></svg><input type="text" id="url" placeholder="https://kick.com/…" autocomplete="off"></div></div>
+        <button class="btn go" id="btnUrl"><svg class="ic"><use href="#i-rocket"/></svg>Traer</button>
+        <div class="rng" id="rangeBox">
+          <label>Desde <input type="number" id="fromMin" min="0" placeholder="0" title="Minuto donde empieza"> min</label>
+          <label>Hasta <input type="number" id="toMin" min="0" placeholder="∞" title="Minuto donde termina"> min</label>
+          <label class="wide">Últimos <input type="number" id="lastMin" min="0" placeholder="todo" title="Solo descarga esa parte final del stream o VOD. En directo: cuánto grabar"> min</label>
         </div>
       </div>
-      <div id="fillerBox" class="hidden" style="margin-top:10px">
-        <div class="note" style="margin:0 0 6px">Pantalla dividida: tu video arriba y un video de relleno abajo (parkour, satisfying…). Usa uno que sea tuyo o con permiso.</div>
-        <button class="btn sm" id="btnFiller">Elegir video de relleno</button> <span class="note" id="fillerName"></span>
-        <button class="btn sm danger hidden" id="btnFillerDel">Quitar</button>
+    </div>
+    <details class="more"><summary>Más opciones del video</summary>
+      <div><label class="lbl" for="query">Buscar un momento (opcional)</label>
+        <input type="text" id="query" maxlength="80" placeholder="Ej: cuando habla del tráiler, la pelea, el gol…" autocomplete="off">
+        <div class="note" id="queryNote">Escucha los tramos más fuertes y sube los que mencionan esas palabras. Necesita Whisper y tarda más en analizar.</div></div>
+      <label class="row" style="margin-top:8px"><svg class="ic"><use href="#i-rocket"/></svg><span>Sacar clips automáticamente mientras graba<small>Solo en directos. Cada <select id="clip_every_min" style="width:auto;display:inline-block;padding:2px 24px 2px 6px" onclick="event.stopPropagation()"><option value="3">3 min</option><option value="15">15 min</option><option value="30">30 min</option></select> analiza lo nuevo y corta los mejores momentos solos. Usa «Cantidad de clips» y «Duración por clip» para ajustar cuántos saca en cada ronda y cuánto duran. Graba en tramos de 60 min hasta que el directo termine solo. Con «Clip ya» guardas los últimos segundos al instante y con «Parar de grabar» terminas cuando quieras.</small></span><input class="sw" type="checkbox" id="live_clips"></label>
+      <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo sin clips automáticos, graba hasta 10 minutos (o los que pongas) y puedes parar con «Analizar lo grabado ya». Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
+    </details>
+  </section>
+
+  <!-- DIRECTOS -->
+  <section class="panel p-live" id="p-live">
+    <h2><i class="recdot" id="recDot"></i>Directos<span class="badge hidden" id="liveBadge">EN VIVO</span></h2>
+    <div class="livebox" id="monList"></div>
+    <div class="addrow"><span>Monitores:<b id="monCount">0</b></span><input type="text" id="monUrl" placeholder="usuario o kick.com/…" autocomplete="off" maxlength="300" aria-label="Canal a vigilar"><button class="btn go sm" id="monAdd"><svg class="ic"><use href="#i-plus"/></svg>Agregar</button></div>
+    <details class="more" id="monitorCard"><summary>Cómo funciona</summary><p class="note" style="margin:0">Clipper revisa estos canales cada 2 minutos. Si uno entra en directo, graba en tramos de 60 min hasta que termine (máximo 6 horas) y saca clips solos todo el rato. Clipper tiene que estar abierto.</p></details>
+  </section>
+
+  <!-- 2 · CANTIDAD Y DURACIÓN -->
+  <section class="panel p-qty" id="p-qty">
+    <h2><svg class="ic"><use href="#i-phone"/></svg>2. Cantidad y duración</h2>
+    <div class="qty">
+      <div class="stp"><label>Cantidad de clips:</label><div class="st"><button class="stb" data-for="n" data-d="-1" aria-label="Menos clips">−</button><b class="val" id="nv">5</b><button class="stb" data-for="n" data-d="1" aria-label="Más clips">+</button></div><small>(1 - 20)</small></div>
+      <div class="stp"><label>Duración por clip:</label><div class="st"><button class="stb" data-for="len" data-d="-5" aria-label="Clips más cortos">−</button><b class="val"><span id="lv">30</span> s</b><button class="stb" data-for="len" data-d="5" aria-label="Clips más largos">+</button></div><small>(5 - 90)</small></div>
+    </div>
+    <input type="range" id="n" min="1" max="20" value="5" class="vh" tabindex="-1" aria-hidden="true">
+    <input type="range" id="len" min="5" max="90" step="1" value="30" class="vh" tabindex="-1" aria-hidden="true">
+    <div class="chips presets" id="presets1">
+      <button class="chip" data-p="kick" title="Juego arriba, cámara abajo, subtítulos y gancho">Kick / GTA</button>
+      <button class="chip" data-p="cam" title="Recorte lleno, para streamers con la cámara a pantalla completa">Solo facecam</button>
+      <button class="chip" data-p="talk" title="Fondo borroso, clips más largos, subtítulos">Charla / podcast</button>
+      <button class="chip" data-p="hype" title="Zoom, vibración y gancho, clips cortos">Máximo hype</button>
+    </div>
+    <details class="more"><summary>Plataforma</summary>
+      <div class="chips" id="preset">
+        <button class="chip" data-v="tiktok">TikTok · 30 s</button><button class="chip" data-v="reels">Reels · 30 s</button><button class="chip" data-v="shorts">Shorts · 45 s</button><button class="chip" data-v="custom">Personalizado</button>
+      </div></details>
+  </section>
+
+  <!-- 3 · FORMATO -->
+  <section class="panel p-fmt" id="p-fmt">
+    <h2><svg class="ic"><use href="#i-image"/></svg>3. Formato</h2>
+    <div class="fmt" id="mode">
+      <button class="chip fmtc" data-v="blur"><svg class="ic"><use href="#i-blur"/></svg><b>9:16</b><small>Fondo borroso</small></button>
+      <button class="chip fmtc" data-v="crop"><svg class="ic"><use href="#i-crop"/></svg><b>9:16</b><small>Recorte lleno</small></button>
+      <button class="chip fmtc" data-v="split"><svg class="ic"><use href="#i-split"/></svg><b>9:16</b><small>Pantalla dividida</small></button>
+      <button class="chip fmtc" data-v="cam" title="Gameplay arriba y tu cámara abajo, sacada del mismo video"><svg class="ic"><use href="#i-cam"/></svg><b>9:16</b><small>Juego + cámara</small></button>
+    </div>
+    <div id="camBox" class="hidden" style="margin-top:10px">
+      <div class="note" style="margin:0 0 8px">Gameplay arriba y tu cámara abajo, recortada del mismo video. Elige en qué esquina está tu cámara y su tamaño.</div>
+      <div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap">
+        <div id="camPrev" style="position:relative;width:160px;height:90px;background:#090a0d;border:1px solid var(--line);border-radius:6px"><div id="camRect" style="position:absolute;background:rgba(245,196,0,.35);border:2px solid var(--yellow)"></div></div>
+        <div><div class="chips" id="cam_corner"><button class="chip" data-v="tl">↖</button><button class="chip" data-v="tr">↗</button><button class="chip" data-v="bl">↙</button><button class="chip" data-v="br">↘</button></div>
+        <div style="margin-top:8px;font-size:13px">Tamaño de la cámara: <b id="csv">28</b>%</div><input type="range" id="cam_size" min="10" max="50" value="28"></div>
       </div>
     </div>
-    <div class="field" style="margin-top:10px"><label class="tog" style="padding:0 0 6px"><input type="checkbox" id="parts"><span>Dividir en partes (Parte 1, Parte 2…)<small>Cada momento se corta en partes seguidas, con la etiqueta PARTE 1/2 arriba</small></span></label>
-      <div class="chips" id="partsN"><button class="chip" data-n="2">2 partes</button><button class="chip" data-n="3">3 partes</button><button class="chip" data-n="4">4 partes</button></div>
-      <div class="note" id="partsNote"></div></div>
-    <div class="grid" style="margin-top:8px">
-      <label class="tog"><input type="checkbox" id="zoom"><span>Zoom lento<small>Acerca poco a poco</small></span></label>
-      <label class="tog"><input type="checkbox" id="shake"><span>Vibración<small>Un temblor ligero</small></span></label>
-      <label class="tog"><input type="checkbox" id="punch"><span>Gancho al inicio<small>Golpe de zoom en el primer medio segundo</small></span></label>
+    <div id="fillerBox" class="hidden" style="margin-top:10px">
+      <div class="note" style="margin:0 0 6px">Pantalla dividida: tu video arriba y un video de relleno abajo (parkour, satisfying…). Usa uno que sea tuyo o con permiso.</div>
+      <button class="btn sm" id="btnFiller">Elegir video de relleno</button> <span class="note" id="fillerName"></span>
+      <button class="btn sm danger hidden" id="btnFillerDel">Quitar</button>
     </div>
+  </section>
+
+  <!-- 4 · EFECTOS -->
+  <section class="panel p-fx" id="p-fx">
+    <h2><svg class="ic"><use href="#i-bolt"/></svg>4. Efectos</h2>
+    <div class="fxlist">
+      <label class="row"><svg class="ic"><use href="#i-zoom"/></svg><span>Zoom lento<small>Acerca poco a poco</small></span><input class="sw" type="checkbox" id="zoom"></label>
+      <label class="row"><svg class="ic"><use href="#i-zoom"/></svg><span>Zoom automático<small>Golpe de zoom donde sube el volumen</small></span><input class="sw" type="checkbox" id="zoom_auto"></label>
+      <label class="row"><svg class="ic"><use href="#i-shake"/></svg><span>Shake<small>Un temblor ligero</small></span><input class="sw" type="checkbox" id="shake"></label>
+      <label class="row"><svg class="ic"><use href="#i-star"/></svg><span>Punch effect<small>Golpe de zoom al inicio</small></span><input class="sw" type="checkbox" id="punch"></label>
+      <label class="row"><svg class="ic"><use href="#i-prog"/></svg><span>Barra de progreso<small>Una barra amarilla que avanza</small></span><input class="sw" type="checkbox" id="bar"></label>
+      <label class="row"><svg class="ic"><use href="#i-mic"/></svg><span>Mejorar voz<small>Quita ruido e iguala el volumen</small></span><input class="sw" type="checkbox" id="enhance"></label>
+      <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Cortar pausas<small>Solo si se habla casi todo el tiempo</small></span><input class="sw" type="checkbox" id="cut_pauses"></label>
+      <label class="row"><svg class="ic"><use href="#i-music"/></svg><span>Música de fondo<small>Baja sola cuando alguien habla</small></span><input class="sw" type="checkbox" id="music"></label>
+      <div class="musicbox"><button class="btn sm" id="btnMusic">Elegir canción</button> <span class="note" id="musicName"></span> <button class="btn sm danger hidden" id="btnMusicDel">Quitar</button>
+        <div style="margin-top:8px;font-size:13px">Volumen de la música: <b id="mvv">25</b>%</div><input type="range" id="music_vol" min="0" max="100" value="25"></div>
+    </div>
+  </section>
+
+  <!-- 5 · SUBTÍTULOS E IA -->
+  <section class="panel p-subs" id="p-subs">
+    <h2><svg class="ic"><use href="#i-chat"/></svg>5. Subtítulos e IA</h2>
+    <label class="row"><svg class="ic"><use href="#i-image"/></svg><span>Subtítulos<small id="subNote">Los escribe tu PC, sin internet</small></span><input class="sw" type="checkbox" id="subs"></label>
+    <label class="row" id="trBox"><svg class="ic"><use href="#i-trans"/></svg><span>Traducir subtítulos<small>Al inglés</small></span><input class="sw" type="checkbox" id="sub_translate"></label>
+    <div class="fld" id="subStyleBox"><label for="sub_style"><svg class="ic" style="color:var(--yellow)"><use href="#i-text"/></svg> Estilo:</label>
+      <select id="sub_style"><option value="karaoke">Amarillo (palabra activa)</option><option value="one">Una palabra</option><option value="box">Caja</option><option value="clean">Blanco simple</option></select></div>
+    <details class="more"><summary>Idioma, textos y logo</summary>
+      <div id="subLangBox"><div class="lbl">Idioma del video</div><div class="chips" id="sub_lang"><button class="chip" data-v="es">Español</button><button class="chip" data-v="en">Inglés</button><button class="chip" data-v="auto">Automático</button></div><hr></div>
+      <div class="lbl" style="color:var(--yellow);font-weight:800">Textos con tiempo</div>
+      <div id="texts"></div>
+      <button class="btn sm" id="addText">+ Añadir texto</button>
+      <div style="margin-top:10px"><div class="lbl">Posición</div><div class="chips" id="text_pos"><button class="chip" data-v="top">Arriba</button><button class="chip" data-v="center">Centro</button><button class="chip" data-v="bottom">Abajo</button></div></div>
+      <div style="margin-top:8px"><div class="lbl">Color</div><div class="chips" id="text_color"><button class="chip" data-v="yellow">Amarillo</button><button class="chip" data-v="white">Blanco</button></div></div>
+      <div style="margin-top:8px"><div class="lbl">Tamaño</div><div class="chips" id="text_size"><button class="chip" data-v="s">S</button><button class="chip" data-v="m">M</button><button class="chip" data-v="l">L</button></div></div>
+      <hr>
+      <div class="lbl" style="color:var(--yellow);font-weight:800">Logo o marca de agua (opcional)</div>
+      <button class="btn sm" id="btnLogo">Elegir imagen</button> <span class="note" id="logoName"></span> <button class="btn sm danger hidden" id="btnLogoDel">Quitar</button>
+      <div style="margin-top:8px"><div class="lbl">Esquina</div><div class="chips" id="logo_pos"><button class="chip" data-v="tl">↖</button><button class="chip" data-v="tr">↗</button><button class="chip" data-v="bl">↙</button><button class="chip" data-v="br">↘</button></div></div>
+    </details>
+  </section>
+
+  <!-- 6 · YOUTUBE -->
+  <section class="panel p-yt" id="p-yt">
+    <h2><svg class="ic" style="color:var(--red)"><use href="#i-yt"/></svg>6. YouTube <span class="note" id="ytState" style="margin:0 0 0 auto;font-family:system-ui;font-style:normal;text-transform:none"></span></h2>
+    <div class="yt">
+      <div>
+        <div class="fld"><label for="ytId">ID de cliente:</label><input type="text" id="ytId" placeholder="Tu ID…" autocomplete="off"></div>
+        <div class="fld"><label for="ytSecret">Secreto:</label><input type="password" id="ytSecret" placeholder="Tu secreto…" autocomplete="off"></div>
+        <button class="btn sm" id="ytSave">Guardar credenciales</button>
+      </div>
+      <div>
+        <label class="ck"><input type="checkbox" id="yt_auto"><span>Guardar en YouTube<small>Sube solos los clips de directos (máx. 10 al día)</small></span></label>
+        <div class="fld"><label for="yt_privacy">Privacidad:</label><select id="yt_privacy"><option value="private">Privado</option><option value="unlisted">No listado</option><option value="public">Público</option></select></div>
+        <button class="btn go" id="ytConnect"><svg class="ic"><use href="#i-link"/></svg>Conectar</button>
+        <button class="btn sm danger hidden" id="ytOff" style="width:100%;margin-top:8px">Desconectar</button>
+      </div>
+    </div>
+    <p class="note" id="ytMsg"></p>
+    <details class="more"><summary>Cómo configurarlo</summary>
+      <p class="note" style="margin:0 0 6px">Usa la API oficial de Google con tu cuenta. Una sola vez: en console.cloud.google.com crea un proyecto, activa «YouTube Data API v3» y crea una credencial «ID de cliente de OAuth» tipo <b>App de escritorio</b>; pega aquí el ID y el secreto. Empieza en «Privado» para probar.</p>
+      <p class="note" style="margin:0">Subir muchos clips repetidos de un mismo streamer puede hacer que YouTube marque el canal. Usa solo contenido tuyo o con permiso.</p>
+    </details>
+  </section>
+
+  <!-- 7 · AJUSTES AVANZADOS -->
+  <section class="panel p-adv" id="p-adv">
+    <h2><svg class="ic"><use href="#i-gear"/></svg>7. Ajustes avanzados</h2>
+    <div class="adv">
+      <div>
+        <div class="fld"><label for="quality">Calidad:</label><select id="quality"><option value="fast">Rápido</option><option value="best">Mejor</option></select></div>
+        <div class="fld"><label for="res">Resolución:</label><select id="res"><option value="1080">1080p</option><option value="720">720p</option></select></div>
+        <div class="fld"><label for="partsSel">Partes:</label><select id="partsSel"><option value="0">Sin dividir</option><option value="2">2 partes</option><option value="3">3 partes</option><option value="4">4 partes</option></select></div>
+      </div>
+      <div>
+        <label class="ck"><input type="checkbox" id="ai_title"><span>IA: Título automático</span></label>
+        <label class="ck" id="aiRankRow" style="display:none"><input type="checkbox" id="ai_rank"><span>IA: Ranking</span></label>
+        <label class="ck"><input type="checkbox" id="smart"><span>Modo inteligente<small id="smartNote">Escucha lo que se dice para elegir mejor</small></span></label>
+        <label class="ck"><input type="checkbox" id="autosave"><span>Auto-guardar<small id="outDirTxt">Sin carpeta elegida</small></span></label>
+      </div>
+    </div>
+    <div class="note" id="partsNote"></div>
+    <div class="chips hidden" id="partsN"><button class="chip" data-n="2">2</button><button class="chip" data-n="3">3</button><button class="chip" data-n="4">4</button></div>
+    <input type="checkbox" id="parts" class="vh" tabindex="-1" aria-hidden="true">
+    <details class="more"><summary>Más ajustes</summary>
+      <label class="ck"><input type="checkbox" id="review"><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
+      <label class="ck"><input type="checkbox" id="gpu"><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
+      <label class="ck"><input type="checkbox" id="snap"><span>Terminar los clips en una pausa<small>Mueve el final unos segundos para no cortar a media frase</small></span></label>
+      <div class="fld"><label for="fps">Fluidez:</label><select id="fps"><option value="0">Igual que el original</option><option value="30">30 fps</option><option value="60">60 fps</option></select></div>
+      <div class="actions" style="margin-top:6px"><button class="btn sm" id="btnDir"><svg class="ic"><use href="#i-folder"/></svg>Elegir carpeta</button><button class="btn sm" id="btnOpenDir">Abrir carpeta</button></div>
+      <hr>
+      <div class="lbl">Título y hashtags con IA (opcional): clave de Gemini</div>
+      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
+      <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div>
+      <div style="margin-top:10px"><div class="lbl">Tono del título</div><div class="chips" id="ai_tone"><button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
+    </details>
+  </section>
+
+  <!-- GENERAR -->
+  <div class="p-gen gen">
+    <button id="btnGen"><svg class="ic"><use href="#i-bolt"/></svg><b>Generar clips</b><small id="genSub">¡Comienza a crear!</small></button>
+  </div>
   </div>
 
-  <details class="card" id="optTexts">
-    <summary>Textos, subtítulos y logo</summary>
-    <p class="label">Textos con tiempo</p>
-    <div id="texts"></div>
-    <button class="btn sm" id="addText">+ Añadir texto</button>
-    <div class="grid" style="margin-top:12px">
-      <div class="field"><label>Posición</label><div class="chips" id="text_pos">
-        <button class="chip" data-v="top">Arriba</button><button class="chip" data-v="center">Centro</button><button class="chip" data-v="bottom">Abajo</button></div></div>
-      <div class="field"><label>Color</label><div class="chips" id="text_color">
-        <button class="chip" data-v="yellow">Amarillo</button><button class="chip" data-v="white">Blanco</button></div></div>
-      <div class="field"><label>Tamaño</label><div class="chips" id="text_size">
-        <button class="chip" data-v="s">S</button><button class="chip" data-v="m">M</button><button class="chip" data-v="l">L</button></div></div>
-    </div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
-    <label class="tog"><input type="checkbox" id="subs"><span>Subtítulos automáticos<small id="subNote">Los escribe tu PC, sin internet</small></span></label>
-    <div class="field" id="subStyleBox"><label>Estilo de los subtítulos</label><div class="chips" id="sub_style">
-      <button class="chip" data-v="karaoke">Amarillo (palabra activa)</button><button class="chip" data-v="one">Una palabra</button><button class="chip" data-v="box">Caja</button><button class="chip" data-v="clean">Blanco simple</button></div></div>
-    <label class="tog" id="trBox"><input type="checkbox" id="sub_translate"><span>Traducir los subtítulos al inglés<small>Whisper lo traduce al escuchar; con el modelo pequeño puede fallar en frases difíciles</small></span></label>
-    <div class="field" id="subLangBox"><label>Idioma del video</label><div class="chips" id="sub_lang">
-      <button class="chip" data-v="es">Español</button><button class="chip" data-v="en">Inglés</button><button class="chip" data-v="auto">Automático</button></div></div>
-    <hr style="border:0;border-top:1px solid var(--line);margin:16px 0">
-    <p class="label">Logo o marca de agua (opcional)</p>
-    <button class="btn sm" id="btnLogo">Elegir imagen</button> <span class="note" id="logoName"></span>
-    <button class="btn sm danger hidden" id="btnLogoDel">Quitar</button>
-    <div class="field" style="margin-top:10px"><label>Esquina</label><div class="chips" id="logo_pos">
-      <button class="chip" data-v="tl">↖</button><button class="chip" data-v="tr">↗</button><button class="chip" data-v="bl">↙</button><button class="chip" data-v="br">↘</button></div></div>
-  </details>
+  <section class="queue" id="queue">
+    <h3><svg class="ic"><use href="#i-clap"/></svg>Cola y clips</h3>
+    <div id="jobs"></div>
+  </section>
+</main>
+</div>
 
-  <details class="card">
-    <summary>Extras de edición</summary>
-    <label class="tog"><input type="checkbox" id="zoom_auto"><span>Zoom en los momentos fuertes<small>Un golpe de zoom donde sube el volumen</small></span></label>
-    <label class="tog"><input type="checkbox" id="bar"><span>Barra de progreso<small>Una barra amarilla que avanza con el clip</small></span></label>
-    <label class="tog"><input type="checkbox" id="enhance"><span>Mejorar la voz y igualar el volumen<small>Quita ruido grave y de fondo y deja todos los clips al mismo nivel</small></span></label>
-    <label class="tog"><input type="checkbox" id="cut_pauses"><span>Quitar pausas largas<small>Solo en clips donde se habla casi todo el tiempo; necesita Whisper. No se aplica a gameplay con poca charla</small></span></label>
-    <label class="tog"><input type="checkbox" id="music"><span>Música de fondo<small>Baja sola cuando alguien habla. Usa música libre de derechos o tuya</small></span></label>
-    <div class="field"><button class="btn sm" id="btnMusic">Elegir canción</button> <span class="note" id="musicName"></span> <button class="btn sm danger hidden" id="btnMusicDel">Quitar</button>
-      <div style="margin-top:8px"><label>Volumen de la música: <b id="mvv">25</b>%</label><input type="range" id="music_vol" min="0" max="100" value="25"></div></div>
-  </details>
-
-  <details class="card">
-    <summary>Más ajustes</summary>
-    <label class="tog"><input type="checkbox" id="smart"><span>Selección inteligente<small id="smartNote">Escucha lo que se dice para elegir mejor los momentos. Tarda más en analizar</small></span></label>
-    <label class="tog"><input type="checkbox" id="snap"><span>Terminar los clips en una pausa<small>Mueve el final unos segundos para no cortar a media frase</small></span></label>
-    <div class="field" style="margin:10px 0"><label>Título y hashtags con IA (opcional): clave de Gemini</label>
-      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
-      <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div></div>
-    <div class="field" style="margin:6px 0"><label>Tono del título</label><div class="chips" id="ai_tone">
-      <button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
-    <label class="tog"><input type="checkbox" id="ai_title"><span>Poner título gancho automático<small>Si no escribes tus propios textos, la IA pone uno al inicio del clip y sugiere hashtags</small></span></label>
-    <label class="tog" id="aiRankRow" style="display:none"><input type="checkbox" id="ai_rank"><span>Que la IA elija los momentos<small>Gemini analiza los candidatos y escoge los mejores. Solo se envía metadata, nunca el video.</small></span></label>
-    <label class="tog"><input type="checkbox" id="review" checked><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
-    <label class="tog"><input type="checkbox" id="gpu" checked><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
-    <div class="field" style="margin-top:8px"><label>Resolución de salida</label><div class="chips" id="res">
-      <button class="chip" data-v="1080">1080p (mejor)</button><button class="chip" data-v="720">720p (más rápido, pesa menos)</button></div></div>
-    <div class="field" style="margin-top:8px"><label>Velocidad</label><div class="chips" id="quality">
-      <button class="chip" data-v="fast" title="Menos calidad, mucho más veloz">Rápido</button><button class="chip" data-v="best" title="Se ve mejor, tarda más">Mejor calidad</button></div></div>
-    <div class="field" style="margin-top:8px"><label>Fluidez (fps)</label><div class="chips" id="fps">
-      <button class="chip" data-v="0">Igual que el original</button><button class="chip" data-v="30">30</button><button class="chip" data-v="60">60</button></div></div>
-    <label class="tog" style="margin-top:8px"><input type="checkbox" id="autosave"><span>Guardar los clips solos en una carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
-    <div class="actions" style="margin-top:0">
-      <button class="btn sm" id="btnDir">Elegir carpeta</button>
-      <button class="btn sm" id="btnOpenDir">Abrir carpeta</button>
-    </div>
-  </details>
-
-  <div id="jobs"></div>
-  <div class="footer">Clipper · <span id="build"></span> · Todo se procesa en tu PC</div>
+<footer class="foot"><div class="eq" aria-hidden="true" id="eq"></div><span>Clipper • Herramienta de creación profesional · Todo se procesa en tu PC</span><span class="sp"></span><b><svg class="ic"><use href="#i-crown"/></svg>Shadow Mode</b></footer>
 </div>
 
 <script>
@@ -275,7 +518,7 @@ const post=(p,b)=>API(p,{method:"POST",headers:{"Content-Type":"application/json
 const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
 const fmt=s=>{s=Math.max(0,Math.round(s));const m=Math.floor(s/60);return m+":"+String(s%60).padStart(2,"0")};
 const native=()=>!!(window.pywebview&&window.pywebview.api&&window.pywebview.api.save_clip);
-$("#build").textContent=BUILD;
+document.querySelectorAll(".buildtxt").forEach(e=>e.textContent=BUILD);
 
 /* ---------- ajustes ---------- */
 let QUERY="";
@@ -287,13 +530,14 @@ const PRESETS={tiktok:30,reels:30,shorts:45};
 
 function chips(id,key,cb){
   const box=$("#"+id);
+  if(box.tagName==="SELECT"){box.onchange=()=>{const v=box.value;S[key]=(key==="fps"||key==="res")?Number(v):v;paint();persist();cb&&cb(v)};return}
   box.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{
     if(b.disabled)return;
     const v=b.dataset.v;S[key]=(key==="fps"||key==="res")?Number(v):v;paint();persist();cb&&cb(v)});
 }
 function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
-    $("#"+id).querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v));
+    {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts"])$("#"+k).checked=!!S[k];
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
@@ -305,7 +549,7 @@ function paint(){
   $("#subLangBox").classList.toggle("hidden",!S.subs);
   $("#subStyleBox").classList.toggle("hidden",!S.subs);$("#trBox").classList.toggle("hidden",!S.subs);
   document.querySelectorAll("#partsN .chip").forEach(b=>b.classList.toggle("on",+b.dataset.n===S.parts_n));
-  $("#partsN").classList.toggle("hidden",!S.parts);
+  $("#partsN").classList.toggle("hidden",!S.parts);$("#partsSel").value=S.parts?String(S.parts_n):"0";
   $("#partsNote").textContent=S.parts?`Cada momento dura ${S.len*S.parts_n} s y sale en ${S.parts_n} partes de ${S.len} s.`:"";
   $("#music_vol").value=S.music_vol;$("#mvv").textContent=S.music_vol;
   $("#outDirTxt").textContent=S.out_dir?S.out_dir:"Sin carpeta elegida";
@@ -316,6 +560,8 @@ chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chi
 $("#cam_size").oninput=e=>{S.cam_size=+e.target.value;paint();persist()};
 $("#music_vol").oninput=e=>{S.music_vol=+e.target.value;paint();persist()};
 document.querySelectorAll("#partsN .chip").forEach(b=>b.onclick=()=>{S.parts_n=+b.dataset.n;paint();persist()});
+$("#partsSel").onchange=e=>{const v=+e.target.value;S.parts=v>0;if(v>0)S.parts_n=v;paint();persist()};
+document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
 for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
@@ -389,11 +635,12 @@ const MON_SEEN=new Set();
 async function loadMonitor(){
   let d;try{d=await (await API("/streamers")).json()}catch(e){return}
   const list=d.streamers||[],box=$("#monList");
-  $("#monCount").textContent=list.length?("· "+list.filter(x=>x.live).length+" en vivo / "+list.length):"";
-  box.innerHTML=list.length?"":'<p class="note">Todavía no hay canales.</p>';
+  const nLive=list.filter(x=>x.live&&x.enabled).length;
+  $("#monCount").textContent=list.length;$("#liveBadge").classList.toggle("hidden",!nLive);$("#recDot").classList.toggle("live",nLive>0);
+  box.innerHTML=list.length?"":'<div class="empty"><svg class="ic"><use href="#i-radar"/></svg><b>Sin directos</b></div>';
   list.forEach(x=>{
-    const r=document.createElement("div");r.style.cssText="display:flex;gap:8px;align-items:center;margin:4px 0";
-    r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span style="flex:1;overflow:hidden;text-overflow:ellipsis" title="${esc(x.url)}">${esc(x.name||x.url)} <small class="note">${x.live?("En vivo"+(x.segments>1?" · tramo "+x.segments:"")):(x.enabled?"Offline":"Pausado")}${x.note?" · "+esc(x.note):""}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
+    const r=document.createElement("div");r.className="mon";
+    r.innerHTML=`<span title="${x.live?"En vivo":"Offline"}">${x.live?"🔴":"⚫"}</span><span class="nm" title="${esc(x.url)}">${esc(x.name||x.url)} <small>${x.live?("En vivo"+(x.segments>1?" · tramo "+x.segments:"")):(x.enabled?"Offline":"Pausado")}${x.note?" · "+esc(x.note):""}</small></span><button class="btn sm tg">${x.enabled?"Pausar":"Activar"}</button><button class="btn sm danger rm">✕</button>`;
     r.querySelector(".tg").onclick=async()=>{await post("/streamers/toggle",{url:x.url,enabled:!x.enabled});loadMonitor()};
     r.querySelector(".rm").onclick=async()=>{await post("/streamers/delete",{url:x.url});loadMonitor()};
     box.appendChild(r);
@@ -505,7 +752,7 @@ async function poll(id){
   else if(d.state==="ready")setTimeout(()=>poll(id),1500);
 }
 function update(J,d){
-  const el=J.el;
+  const el=J.el;J.state=d.state;setTimeout(updateGen,0);
   el.querySelector(".jobname").textContent=d.name;
   el.querySelector(".state").textContent=LABEL[d.state]||d.state;
   el.querySelector(".bar i").style.width=(d.state==="ready"?100:d.pct)+"%";
@@ -609,12 +856,36 @@ function showClips(J,d){
     if(r&&r.ok){a.textContent="Guardado ✓"}else if(r&&!r.cancel){alert("No se pudo guardar el clip")}}));
 }
 
+/* ---------- boton Generar, menu lateral y detalles ---------- */
+const waitingJob=()=>Object.values(JOBS).find(J=>J.view==="ready"&&J.waiting&&!J.rendered&&J.el.querySelector(".cut"));
+function updateGen(){
+  const s=$("#genSub");if(!s)return;
+  if($("#url").value.trim())s.textContent="Traer el enlace y analizar";
+  else if(waitingJob())s.textContent="Cortar los momentos elegidos";
+  else if(Object.values(JOBS).some(J=>["queued","analyzing","rendering"].includes(J.state)))s.textContent="Trabajando… mira la cola abajo";
+  else s.textContent="¡Comienza a crear!";
+}
+$("#url").addEventListener("input",updateGen);
+$("#url").addEventListener("keydown",e=>{if(e.key==="Enter")$("#btnUrl").click()});
+$("#btnGen").onclick=()=>{
+  if($("#url").value.trim()){$("#btnUrl").click();setTimeout(updateGen,300);return}
+  const J=waitingJob();
+  if(J){const cut=J.el.querySelector(".cut");if(cut&&!cut.disabled){cut.click();J.el.scrollIntoView({behavior:"smooth",block:"center"});return}}
+  if(Object.values(JOBS).some(J=>["queued","analyzing","rendering"].includes(J.state))){$("#queue").scrollIntoView({behavior:"smooth"});return}
+  $("#file").click();
+};
+document.querySelectorAll(".nav").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll(".nav").forEach(x=>x.classList.toggle("on",x===b));
+  const p=$("#"+b.dataset.go);p.scrollIntoView({behavior:"smooth",block:"start"});
+  p.classList.remove("flash");void p.offsetWidth;p.classList.add("flash")});
+$("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.preventDefault();$("#file").click()}});
+{const eq=$("#eq");const h=[6,12,18,9,22,14,8,20,11,16,7,19,13,10,21,15,9,17,12,6,18,10,14,8];h.forEach(v=>{const i=document.createElement("i");i.style.height=v+"px";eq.appendChild(i)})}
 /* ---------- arranque ---------- */
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s)}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
   paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);loadYoutube();
-  if(!S.intro_seen)$("#intro").style.display="block";
+  if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
   if(open)open.split(",").forEach(id=>id&&addJobCard(id,"Video"));
