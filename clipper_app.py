@@ -142,7 +142,8 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
+                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -211,17 +212,25 @@ def monitor_job_active(job_id):
 
 
 def monitor_start_segment(url, name, st):
+    cfg = load_settings()
+    mon_clip_every = int(cfg.get("mon_clip_every", 15))
+    mon_clip_len   = int(cfg.get("mon_clip_len", 30))
+    mon_max_hours  = int(cfg.get("mon_max_hours", 6))
+    mon_save       = bool(cfg.get("mon_save_stream", False))
     job_id = new_job(name or url)
     JOBS[job_id]["monitor"] = True
     JOBS[job_id]["_template"] = next((x["template"] for x in load_streamers() if x["url"] == url), "") or None
+    JOBS[job_id]["_mon_save_stream"] = mon_save
     if st.get("segments"):
         JOBS[job_id]["_live_edge"] = True     # los tramos siguientes empiezan desde ahora, sin repetir
     with MONITOR_LOCK:
         st["job_id"] = job_id
         st["segments"] = st.get("segments", 0) + 1
-    smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
+    seg_min = min(MONITOR_SEGMENT_MIN, mon_max_hours * 60)
+    smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True,
+             "clip_every": mon_clip_every * 60}
     threading.Thread(target=analyze_job,
-                     args=(job_id, None, url, 5, 30, (0, None, MONITOR_SEGMENT_MIN), smart, True),
+                     args=(job_id, None, url, 5, mon_clip_len, (0, None, seg_min), smart, True),
                      daemon=True).start()
 
 
@@ -2178,6 +2187,21 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     if not out_final.is_file() or out_final.stat().st_size < 10000:
         raise RuntimeError("No se pudo grabar el directo. " + " | ".join(list(tail)[-3:])[-300:])
     job["offset"] = 0
+
+    # Guardar la grabación completa si el usuario lo pidió
+    if job.get("_mon_save_stream"):
+        try:
+            cfg = load_settings()
+            save_dir = Path(cfg.get("out_dir") or jdir)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            safe = safe_stem(meta.get("title") or meta.get("id") or job.get("name") or "directo")
+            dest = unique_path(save_dir, f"{safe}_completo", ".mp4")
+            shutil.copy2(out_final, dest)
+            job.setdefault("extra_files", []).append(str(dest))
+            job["msg"] = f"Grabación guardada: {dest.name}"
+        except Exception as _e:
+            job.setdefault("warnings", []).append(f"No se pudo guardar la grabación: {_e}")
+
     return out_final
 
 
@@ -2999,6 +3023,14 @@ class Handler(BaseHTTPRequestHandler):
                         "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
         elif u.path == "/streamers":
             self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
+        elif u.path == "/streamers/config":
+            cfg = load_settings()
+            self._json({"clip_every": cfg.get("mon_clip_every", 15),
+                        "clip_len": cfg.get("mon_clip_len", 30),
+                        "max_hours": cfg.get("mon_max_hours", 6),
+                        "quality": cfg.get("mon_quality", "auto"),
+                        "save_stream": bool(cfg.get("mon_save_stream")),
+                        "auto_clips": cfg.get("mon_auto_clips", True)})
         elif u.path == "/youtube":
             cfg, st = yt_load(), load_settings()
             self._json({"configured": bool(cfg.get("client_id") and cfg.get("client_secret")),
@@ -3098,6 +3130,23 @@ class Handler(BaseHTTPRequestHandler):
             YT_FILE.unlink(missing_ok=True)
             YT_TOKEN.update(value="", exp=0.0)
             YT_AUTH.update(status="idle", msg="")
+            self._json({"ok": True})
+        elif u.path == "/streamers/config":
+            body = self._body_json() or {}
+            cfg = load_settings()
+            if "clip_every" in body:
+                cfg["mon_clip_every"] = int(clean_num(body.get("clip_every"), 1, 60, 15))
+            if "clip_len" in body:
+                cfg["mon_clip_len"] = int(clean_num(body.get("clip_len"), 10, 120, 30))
+            if "max_hours" in body:
+                cfg["mon_max_hours"] = int(clean_num(body.get("max_hours"), 1, 6, 6))
+            if "quality" in body:
+                cfg["mon_quality"] = body["quality"] if body["quality"] in ("auto","best","1080","720") else "auto"
+            if "save_stream" in body:
+                cfg["mon_save_stream"] = bool(body["save_stream"])
+            if "auto_clips" in body:
+                cfg["mon_auto_clips"] = bool(body["auto_clips"])
+            save_settings(cfg)
             self._json({"ok": True})
         elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete", "/streamers/template"):
             body = self._body_json() or {}

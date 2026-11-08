@@ -367,7 +367,17 @@ input[type=range]{accent-color:var(--yellow);width:100%}
     <h2><i class="recdot" id="recDot"></i>Directos<span class="badge hidden" id="liveBadge">EN VIVO</span></h2>
     <div class="livebox" id="monList"></div>
     <div class="addrow"><span>Monitores:<b id="monCount">0</b></span><input type="text" id="monUrl" placeholder="usuario o kick.com/…" autocomplete="off" maxlength="300" aria-label="Canal a vigilar"><button class="btn go sm" id="monAdd"><svg class="ic"><use href="#i-plus"/></svg>Agregar</button></div>
-    <details class="more" id="monitorCard"><summary>Cómo funciona</summary><p class="note" style="margin:0">Clipper revisa estos canales cada 2 minutos. Si uno entra en directo, graba en tramos de 60 min hasta que termine (máximo 6 horas) y saca clips solos todo el rato. Clipper tiene que estar abierto.</p></details>
+    <details class="more" id="monitorCard"><summary>⚙️ Config de directos</summary>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px">
+        <div class="fld"><label for="mon_clip_every">Clip cada:</label><select id="mon_clip_every"><option value="3">3 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
+        <div class="fld"><label for="mon_clip_len">Duración clip:</label><select id="mon_clip_len"><option value="20">20 s</option><option value="30">30 s (recom.)</option><option value="45">45 s</option><option value="60">60 s</option></select></div>
+        <div class="fld"><label for="mon_max_h">Máx. horas:</label><select id="mon_max_h"><option value="2">2 h</option><option value="4">4 h</option><option value="6">6 h (máx)</option></select></div>
+        <div class="fld"><label for="mon_quality">Calidad grab.:</label><select id="mon_quality"><option value="auto">Auto</option><option value="best">Mejor</option><option value="1080">1080p</option><option value="720">720p</option></select></div>
+      </div>
+      <label class="ck" style="margin-top:8px"><input type="checkbox" id="mon_save_stream"><span>Guardar la grabación completa<small>Además de los clips, guarda el video entero del directo</small></span></label>
+      <label class="ck"><input type="checkbox" id="mon_auto_clips"><span>Clips automáticos activados por defecto<small>Los canales nuevos empiezan con clips auto</small></span></label>
+      <p class="note" style="margin:6px 0 0">Clipper revisa cada 2 min. Graba en tramos de 60 min hasta que termine (máximo según config). Clipper debe estar abierto.</p>
+    </details>
   </section>
 
   <!-- 2 · CANTIDAD Y DURACIÓN -->
@@ -483,38 +493,49 @@ input[type=range]{accent-color:var(--yellow);width:100%}
   <!-- 7 · AJUSTES AVANZADOS -->
   <section class="panel p-adv" id="p-adv">
     <h2><svg class="ic"><use href="#i-gear"/></svg>7. Ajustes avanzados</h2>
+
+    <!-- IA -->
+    <div class="lbl" style="color:var(--yellow);margin-bottom:6px">🤖 Inteligencia Artificial</div>
+    <div class="adv" style="margin-bottom:10px">
+      <div>
+        <label class="ck"><input type="checkbox" id="ai_title"><span>Título automático con IA<small>Gemini o Groq genera el título y hashtags de cada clip</small></span></label>
+        <label class="ck"><input type="checkbox" id="ai_listen"><span>IA escucha el audio<small>Manda 90 s de audio a la nube (Groq/Gemini) para elegir mejor momentos</small></span></label>
+        <label class="ck" id="aiRankRow"><input type="checkbox" id="ai_rank"><span>IA elige el orden de los clips<small>Gemini reordena los momentos por viralidad (solo texto, nunca el video)</small></span></label>
+      </div>
+      <div>
+        <label class="ck"><input type="checkbox" id="smart"><span>Modo inteligente<small id="smartNote">Whisper escucha para elegir mejor los momentos</small></span></label>
+        <div style="margin-top:6px"><div class="lbl">Tono del título</div><div class="chips" id="ai_tone" style="margin-top:4px"><button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
+      </div>
+    </div>
+    <div id="aiKeyBox" style="display:none;border-top:1px solid var(--line);padding-top:10px;margin-bottom:10px">
+      <div class="lbl" style="margin-bottom:4px">🔑 Clave de Gemini <span style="color:var(--muted);font-weight:400;font-size:12px">(gratis en aistudio.google.com/apikey)</span></div>
+      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm" id="gtest">Probar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
+      <div class="note" id="gnote" style="margin-top:4px">Solo se envía a Google el texto de cada clip, nunca el video.</div>
+      <div class="lbl" style="margin:10px 0 4px">🔑 Clave de Groq <span style="color:var(--muted);font-weight:400;font-size:12px">(gratis en console.groq.com/keys)</span></div>
+      <div style="display:flex;gap:6px"><input type="password" id="qkey" placeholder="Pega tu clave de Groq aquí" autocomplete="off"><button class="btn sm" id="qsave">Guardar</button><button class="btn sm" id="qtest">Probar</button><button class="btn sm danger hidden" id="qdel">Quitar</button></div>
+      <div class="note" id="qnote" style="margin-top:4px">Se usa Groq primero y Gemini de respaldo. Se guarda solo en tu PC.</div>
+    </div>
+
+    <!-- VIDEO -->
+    <div class="lbl" style="color:var(--yellow);margin-bottom:6px">🎬 Video y exportación</div>
     <div class="adv">
       <div>
         <div class="fld"><label for="quality">Calidad:</label><select id="quality"><option value="fast">Rápido</option><option value="best">Mejor</option></select></div>
         <div class="fld"><label for="res">Resolución:</label><select id="res"><option value="1080">1080p</option><option value="720">720p</option></select></div>
+        <div class="fld"><label for="fps">Fluidez:</label><select id="fps"><option value="0">Igual que el original</option><option value="30">30 fps</option><option value="60">60 fps</option></select></div>
         <div class="fld"><label for="partsSel">Partes:</label><select id="partsSel"><option value="0">Sin dividir</option><option value="auto">Automático</option><option value="full">Todo el video en partes</option><option value="2">2 partes</option><option value="3">3 partes</option><option value="4">4 partes</option></select></div>
       </div>
       <div>
-        <label class="ck"><input type="checkbox" id="ai_title"><span>IA: Título automático</span></label>
-        <label class="ck"><input type="checkbox" id="ai_listen"><span>IA escucha (Groq o Gemini, más rápido) <small>Manda 90 s de audio por momento a la nube</small></span></label>
-        <label class="ck" id="aiRankRow" style="display:none"><input type="checkbox" id="ai_rank"><span>IA: Ranking</span></label>
-        <label class="ck"><input type="checkbox" id="smart"><span>Modo inteligente<small id="smartNote">Escucha lo que se dice para elegir mejor</small></span></label>
-        <label class="ck"><input type="checkbox" id="autosave"><span>Auto-guardar<small id="outDirTxt">Sin carpeta elegida</small></span></label>
+        <label class="ck"><input type="checkbox" id="review"><span>Revisar momentos antes de cortar<small>Ves la gráfica, mueves o quitas momentos</small></span></label>
+        <label class="ck"><input type="checkbox" id="gpu"><span>Usar tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
+        <label class="ck"><input type="checkbox" id="snap"><span>Terminar clips en pausa<small>Evita cortar a media frase</small></span></label>
+        <label class="ck"><input type="checkbox" id="autosave"><span>Auto-guardar en carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
+        <div class="actions" style="margin-top:8px"><button class="btn sm" id="btnDir"><svg class="ic"><use href="#i-folder"/></svg>Elegir carpeta</button><button class="btn sm" id="btnOpenDir">Abrir</button></div>
       </div>
     </div>
     <div class="note" id="partsNote"></div>
     <div class="chips hidden" id="partsN"><button class="chip" data-n="2">2</button><button class="chip" data-n="3">3</button><button class="chip" data-n="4">4</button></div>
     <input type="checkbox" id="parts" class="vh" tabindex="-1" aria-hidden="true">
-    <details class="more"><summary>Más ajustes</summary>
-      <label class="ck"><input type="checkbox" id="review"><span>Revisar los momentos antes de cortar<small>Ves la gráfica, mueves, quitas o añades momentos</small></span></label>
-      <label class="ck"><input type="checkbox" id="gpu"><span>Usar la tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
-      <label class="ck"><input type="checkbox" id="snap"><span>Terminar los clips en una pausa<small>Mueve el final unos segundos para no cortar a media frase</small></span></label>
-      <div class="fld"><label for="fps">Fluidez:</label><select id="fps"><option value="0">Igual que el original</option><option value="30">30 fps (mas rapido)</option><option value="60">60 fps</option></select></div>
-      <div class="actions" style="margin-top:6px"><button class="btn sm" id="btnDir"><svg class="ic"><use href="#i-folder"/></svg>Elegir carpeta</button><button class="btn sm" id="btnOpenDir">Abrir carpeta</button></div>
-      <hr>
-      <div class="lbl">Título y hashtags con IA (opcional): clave de Gemini</div>
-      <div style="display:flex;gap:6px"><input type="password" id="gkey" placeholder="Pega tu clave aquí" autocomplete="off"><button class="btn sm" id="gsave">Guardar</button><button class="btn sm" id="gtest">Probar</button><button class="btn sm danger hidden" id="gdel">Quitar</button></div>
-      <div class="note" id="gnote">Sacas una gratis en aistudio.google.com/apikey. Se guarda solo en tu PC. Solo se envía a Google el texto de cada clip, nunca el video.</div>
-      <div class="lbl" style="margin-top:12px">IA que escucha (opcional): clave de Groq (Whisper en la nube, con tiempos por palabra)</div>
-      <div style="display:flex;gap:6px"><input type="password" id="qkey" placeholder="Pega tu clave de Groq aquí" autocomplete="off"><button class="btn sm" id="qsave">Guardar</button><button class="btn sm" id="qtest">Probar</button><button class="btn sm danger hidden" id="qdel">Quitar</button></div>
-      <div class="note" id="qnote">Sacas una gratis en console.groq.com/keys. Se guarda solo en tu PC. Con "IA escucha" activa se manda a Groq una muestra de audio de cada momento. Puedes tener Groq y Gemini a la vez: se usa Groq primero y Gemini de respaldo.</div>
-      <div style="margin-top:10px"><div class="lbl">Tono del título</div><div class="chips" id="ai_tone"><button class="chip" data-v="directo">Directo</button><button class="chip" data-v="gracioso">Gracioso</button><button class="chip" data-v="dramatico">Dramático</button><button class="chip" data-v="misterioso">Misterioso</button><button class="chip" data-v="epico">Épico</button></div></div>
-    </details>
   </section>
 
   <!-- GENERAR -->
@@ -641,8 +662,11 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
-  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!(CAPS.gemini||CAPS.groq);$("#ai_listen").disabled=!(CAPS.gemini||CAPS.groq);$("#qdel").classList.toggle("hidden",!CAPS.groq);
-  $("#aiRankRow").style.display=CAPS.gemini?"":"none";$("#ai_rank").disabled=!CAPS.gemini;
+  const hasAI=CAPS.gemini||CAPS.groq;
+  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!hasAI;$("#ai_listen").disabled=!hasAI;$("#qdel").classList.toggle("hidden",!CAPS.groq);
+  $("#aiRankRow").style.display="";$("#ai_rank").disabled=!CAPS.gemini;
+  $("#aiKeyBox").style.display="";
+  if(!hasAI)$("#aiKeyBox").style.display="";
   document.querySelector('#pick [data-m=voz]').disabled=!CAPS.whisper;$("#pcIa").disabled=!(CAPS.gemini&&CAPS.whisper);
   if(!CAPS.whisper)document.querySelector('#pick [data-m=voz] span').textContent="No disponible: esta instalación no trae el modelo de voz.";
   if(CAPS.gemini)$("#pcIaNote").textContent="Gemini reordena los mejores momentos y pone título. Solo envía texto, nunca el video.";
@@ -702,6 +726,21 @@ $("#monAdd").onclick=async()=>{
   $("#monUrl").value="";loadMonitor();
 };
 $("#monUrl").addEventListener("keydown",e=>{if(e.key==="Enter")$("#monAdd").click()});
+/* monitor config */
+function monCfg(){return{clip_every:+$("#mon_clip_every").value||15,clip_len:+$("#mon_clip_len").value||30,max_hours:+$("#mon_max_h").value||6,quality:$("#mon_quality").value,save_stream:$("#mon_save_stream").checked,auto_clips:$("#mon_auto_clips").checked}}
+function saveMonCfg(){post("/streamers/config",monCfg()).catch(()=>{})}
+["mon_clip_every","mon_clip_len","mon_max_h","mon_quality"].forEach(id=>$("#"+id).onchange=saveMonCfg);
+["mon_save_stream","mon_auto_clips"].forEach(id=>$("#"+id).onchange=saveMonCfg);
+async function loadMonCfg(){
+  try{const d=await(await API("/streamers/config")).json();
+    if(d.clip_every)$("#mon_clip_every").value=d.clip_every;
+    if(d.clip_len)$("#mon_clip_len").value=d.clip_len;
+    if(d.max_hours)$("#mon_max_h").value=d.max_hours;
+    if(d.quality)$("#mon_quality").value=d.quality;
+    $("#mon_save_stream").checked=!!d.save_stream;
+    $("#mon_auto_clips").checked=d.auto_clips!==false;
+  }catch(e){}
+}
 async function loadAssets(){
   try{const a=await (await API("/assets")).json();
     $("#logoName").textContent=a.logo||"Sin logo: no se pondrá nada.";$("#btnLogoDel").classList.toggle("hidden",!a.logo);
@@ -952,7 +991,7 @@ $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.pre
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s);if(!s.fps30){S.fps=30;S.fps30=true;persist()}}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
   if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
