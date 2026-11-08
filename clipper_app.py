@@ -122,7 +122,10 @@ ENERGY = {}               # id -> energia por segundo (para zoom en los picos)
 ENCODER = {"name": None, "ready": False}
 HAS_ASS = [False]
 UPDATE = {"state": "idle", "available": False, "version": "", "url": "",
-          "dl": "idle", "pct": 0, "msg": ""}
+          "dl": "idle", "pct": 0, "msg": "", "ready": False, "busy": False,
+          "lite_url": "", "lite_sha": ""}
+UPDATES_API = "https://api.github.com/repos/Y4ll/Clipper/releases/tags/updates"
+UPDATE_EVERY = 3 * 3600   # revisa si hay version nueva cada 3 horas mientras la app esta abierta
 UPDATE_PREFIX = "https://github.com/Y4ll/Clipper/"
 
 FONT_CANDIDATES = [
@@ -2569,26 +2572,186 @@ def cleanup_old_jobs():
 
 
 # ------------------------------------------------------------- actualizacion
+def _get_json(url, timeout=10):
+    req = urllib.request.Request(url, headers={"User-Agent": "Clipper"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.load(r)
+
+
 def check_update():
+    """Mira si hay version nueva. Si tambien hay archivo de actualizacion ligero (~22 MB), lo guarda."""
     if BUILD == "dev":
         UPDATE["state"] = "done"
         return
     try:
-        req = urllib.request.Request(UPDATE_API, headers={"User-Agent": "Clipper"})
-        with urllib.request.urlopen(req, timeout=8) as r:
-            data = json.load(r)
+        data = _get_json(UPDATE_API, 8)
         sha = str(data.get("target_commitish", ""))[:7]
         asset = next((a for a in data.get("assets", []) if a.get("name") == "ClipperSetup.exe"), None)
         if asset and re.fullmatch(r"[0-9a-f]{7}", sha) and sha != BUILD[:7]:
             UPDATE.update(available=True, version=sha, url=asset["browser_download_url"])
+            try:   # archivo interno de actualizacion (release "updates"): solo Clipper.exe + su huella
+                upd = _get_json(UPDATES_API, 8)
+                names = {a.get("name"): a.get("browser_download_url") for a in upd.get("assets", [])}
+                if "Clipper-update.exe" in names and "update.json" in names:
+                    meta = _get_json(names["update.json"], 8)
+                    if str(meta.get("version", ""))[:7] == sha and re.fullmatch(r"[0-9a-f]{64}", str(meta.get("sha256", ""))):
+                        UPDATE.update(lite_url=names["Clipper-update.exe"], lite_sha=meta["sha256"],
+                                      lite_size=int(meta.get("size") or 0))
+            except Exception:  # noqa: BLE001
+                pass
     except Exception:  # noqa: BLE001
         pass
     UPDATE["state"] = "done"
 
 
+def _app_exe():
+    return Path(sys.executable)
+
+
+def _can_self_update():
+    """Solo la app instalada (Windows, .exe empaquetado) con carpeta donde se puede escribir."""
+    if not (IS_WIN and getattr(sys, "frozen", False)):
+        return False
+    try:
+        probe = _app_exe().with_name("Clipper.write-test")
+        probe.write_bytes(b"x")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def _fetch_file(url, dest, min_size):
+    """Baja url a dest con progreso y reanudando si quedo a medias. Valida que sea un .exe."""
+    dest = Path(dest)
+    part = dest.with_name(dest.name + ".part")
+    if dest.exists() and dest.stat().st_size > min_size and dest.read_bytes()[:2] == b"MZ":
+        return dest
+    have = part.stat().st_size if part.exists() else 0
+    req = urllib.request.Request(url, headers={"User-Agent": "Clipper"})
+    if have:
+        req.add_header("Range", f"bytes={have}-")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        resumed = have > 0 and getattr(r, "status", 200) == 206
+        total = int(r.headers.get("Content-Length") or 0) + (have if resumed else 0)
+        got, last = (have if resumed else 0), time.time()
+        with open(part, "ab" if resumed else "wb") as f:
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total and time.time() - last > 0.3:
+                    last = time.time()
+                    UPDATE.update(pct=int(got * 100 / total), msg=f"{got // 1048576} de {total // 1048576} MB")
+    if part.stat().st_size < min_size or part.read_bytes()[:2] != b"MZ":
+        part.unlink(missing_ok=True)
+        raise RuntimeError("El archivo bajado no es valido.")
+    part.replace(dest)
+    return dest
+
+
+def _prepare_lite():
+    """Baja Clipper-update.exe en segundo plano (como Steam) y comprueba su huella SHA-256."""
+    exe = _app_exe()
+    new = exe.with_name("Clipper.new.exe")
+    ver = exe.with_name("Clipper.new.ver")
+    try:
+        if not (new.exists() and ver.exists() and ver.read_text().strip() == UPDATE["version"]
+                and _sha256_file(new) == UPDATE["lite_sha"]):
+            ver.unlink(missing_ok=True)
+            UPDATE.update(dl="downloading", pct=0, msg="Bajando la actualizacion...")
+            _fetch_file(UPDATE["lite_url"], new, 5_000_000)
+            if _sha256_file(new) != UPDATE["lite_sha"]:
+                new.unlink(missing_ok=True)
+                raise RuntimeError("La huella del archivo no coincide")
+            ver.write_text(UPDATE["version"])
+        UPDATE.update(dl="ready", ready=True, pct=100, msg="Lista: se instala al reiniciar")
+    except Exception as e:  # noqa: BLE001
+        UPDATE.update(dl="idle", ready=False, pct=0, msg=str(e)[:120])
+
+
+def update_loop():
+    """Revisa y baja las actualizaciones solo, sin que el usuario haga nada."""
+    time.sleep(5)
+    while True:
+        check_update()
+        if UPDATE["available"] and UPDATE.get("lite_url") and not UPDATE["ready"] and _can_self_update():
+            _prepare_lite()
+        wait = 600 if (UPDATE["available"] and not UPDATE["ready"] and not UPDATE.get("lite_url")) else UPDATE_EVERY
+        time.sleep(wait)
+
+
+def update_busy():
+    try:
+        return live_recording_active() or any(
+            j.get("state") in ("queued", "downloading", "analyzing", "rendering") for j in list(JOBS.values()))
+    except RuntimeError:
+        return False
+
+
+def swap_to_new(restart=True):
+    """Cambia Clipper.exe por Clipper.new.exe. Windows deja renombrar un .exe en uso: el viejo pasa a
+    Clipper.old.exe, el nuevo ocupa su lugar y se abre. Si algo falla, deja todo como estaba."""
+    exe = _app_exe()
+    new, old, ver = (exe.with_name(n) for n in ("Clipper.new.exe", "Clipper.old.exe", "Clipper.new.ver"))
+    if not new.exists() or new.read_bytes()[:2] != b"MZ":
+        return False
+    old.unlink(missing_ok=True)
+    os.replace(exe, old)
+    try:
+        os.replace(new, exe)
+    except OSError:
+        os.replace(old, exe)
+        return False
+    ver.unlink(missing_ok=True)
+    if restart:
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")   # el nuevo .exe desempaqueta lo suyo
+        env.pop("_MEIPASS2", None)
+        subprocess.Popen([str(exe)], env=env, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, creationflags=0x00000008 | 0x00000200 | NO_WINDOW)
+        threading.Timer(0.8, lambda: os._exit(0)).start()
+    return True
+
+
+def apply_pending_on_start():
+    """Al abrir Clipper: si hay una actualizacion ya bajada y verificada, se instala antes de empezar."""
+    if BUILD == "dev" or not _can_self_update():
+        return False
+    exe = _app_exe()
+    try:
+        exe.with_name("Clipper.old.exe").unlink(missing_ok=True)
+        new, ver = exe.with_name("Clipper.new.exe"), exe.with_name("Clipper.new.ver")
+        if new.exists() and ver.exists() and ver.read_text().strip() not in ("", BUILD[:7]):
+            return swap_to_new(restart=True)
+        if new.exists() and ver.exists() and ver.read_text().strip() == BUILD[:7]:
+            new.unlink(missing_ok=True)   # ya estamos en esa version
+            ver.unlink(missing_ok=True)
+    except OSError:
+        pass
+    return False
+
+
 def install_update():
     """Empieza a bajar el instalador nuevo en segundo plano. Devuelve True si arranco."""
     url = UPDATE.get("url", "")
+    if UPDATE.get("ready"):   # actualizacion ligera ya bajada: se aplica y Clipper se reinicia
+        if update_busy():
+            UPDATE["busy"] = True
+            return False
+        UPDATE.update(busy=False, dl="launching", msg="Reiniciando Clipper...")
+        if swap_to_new(restart=True):
+            return True
+        UPDATE.update(ready=False, dl="idle")
     if not IS_WIN or not url.startswith(UPDATE_PREFIX):
         return False
     if UPDATE["dl"] in ("downloading", "launching"):
@@ -3000,7 +3163,7 @@ class Handler(BaseHTTPRequestHandler):
                 ok = UPDATE["available"] and install_update()
             except Exception:  # noqa: BLE001
                 ok = False
-            self._json({"ok": bool(ok)})
+            self._json({"ok": bool(ok), "busy": bool(UPDATE.get("busy"))})
         else:
             self.send_error(404)
 
@@ -3297,6 +3460,8 @@ def main():
     p.add_argument("files", nargs="*", help="Videos a abrir (puedes arrastrarlos sobre Clipper.exe)")
     args = p.parse_args()
     LAN_MODE = args.lan
+    if apply_pending_on_start():   # habia una actualizacion lista: se instalo y se abrio la nueva
+        return
     os.environ["PATH"] = str(APP_DIR) + os.pathsep + os.environ.get("PATH", "")
     local_ff = APP_DIR / ("ffmpeg.exe" if sys.platform == "win32" else "ffmpeg")
     if local_ff.is_file():
@@ -3319,7 +3484,7 @@ def main():
     if opened:
         url += "?open=" + ",".join(opened)
     threading.Thread(target=detect_encoder, daemon=True).start()
-    threading.Thread(target=check_update, daemon=True).start()
+    threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=monitor_loop, daemon=True).start()
     if args.lan:
         print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{port}")

@@ -94,11 +94,43 @@ jobs:
             Clipper-Windows.zip
             output/ClipperSetup.exe
 
-      - name: Publicar Release (instalador y zip)
+      - name: Archivos internos de actualizacion
+        shell: pwsh
+        run: |
+          Copy-Item pack\Clipper.exe output\Clipper-update.exe
+          $h = (Get-FileHash output\Clipper-update.exe -Algorithm SHA256).Hash.ToLower()
+          $v = "${{ github.sha }}".Substring(0, 7)
+          $n = (Get-Item output\Clipper-update.exe).Length
+          '{"version": "' + $v + '", "sha256": "' + $h + '", "size": ' + $n + '}' | Set-Content -Encoding ascii output\update.json
+          Get-Content output\update.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Clipper-update
+          path: |
+            output/Clipper-update.exe
+            output/update.json
+
+      - name: Publicar Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release delete latest --cleanup-tag -y --repo ${{ github.repository }}
+          function Publicar($tag, $titulo, $notas, $archivos, $extra) {
+            gh release delete $tag --cleanup-tag -y --repo ${{ github.repository }}
+            $global:LASTEXITCODE = 0
+            for ($i = 1; $i -le 5; $i++) {
+              gh release create $tag @archivos --repo ${{ github.repository }} --target ${{ github.sha }} --title $titulo --notes $notas @extra
+              if ($LASTEXITCODE -eq 0) { return }
+              Write-Host "intento $i fallo al crear $tag; reintento"
+              Start-Sleep -Seconds (10 * $i)
+              $global:LASTEXITCODE = 0
+            }
+            throw "No se pudo crear el Release $tag"
+          }
+          Publicar "latest" "Clipper para Windows" "Descarga e instala ClipperSetup.exe. Despues Clipper se actualiza solo." @("output/ClipperSetup.exe", "Clipper-Windows.zip") @()
+          # archivos que usa la propia app para actualizarse (no hace falta bajarlos)
+          try {
+            Publicar "updates" "Archivos internos de actualizacion" "No descargar: los usa Clipper para actualizarse solo." @("output/Clipper-update.exe", "output/update.json") @("--prerelease")
+          } catch { Write-Host "AVISO: no se publico la actualizacion ligera: $_" }
           $global:LASTEXITCODE = 0
-          gh release create latest output/ClipperSetup.exe Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga ClipperSetup.exe para instalar Clipper con acceso directo y desinstalador. Clipper-Windows.zip es la versión portátil (descomprime y abre Clipper.exe). Las dos traen ffmpeg.exe."
