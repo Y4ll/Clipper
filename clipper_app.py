@@ -1129,6 +1129,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
              "scale=1080:1920:flags=bilinear[bg];"
              "[b]scale=1080:-2[fg];"
              "[bg][fg]overlay=(W-w)/2:(H-h)/2[v0]")
+    if o["fps"] == 30:   # bajar a 30 fps al principio: todo lo demas procesa la mitad de cuadros en 60 fps
+        g = g.replace("[0:v]", "[0:v]fps=30,", 1)
     if keep:   # quitar pausas: solo pasan los tramos elegidos
         g = f"[0:v]select='{keep_expr(keep)}',setpts=N/FRAME_RATE/TB[sv];" + g.replace("[0:v]", "[sv]")
     state = {"last": "v0", "n": 0, "g": g}
@@ -1159,8 +1161,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
         else:
             cr = "crop=1080:1920"
         stage(sc + "," + cr)
-    if o["fps"] in (30, 60):
-        stage(f"fps={o['fps']}")
+    if o["fps"] == 60:
+        stage("fps=60")
     if logo_idx is not None:
         pos = {"tl": "40:140", "tr": "W-w-40:140", "bl": "40:H-h-330",
                "br": "W-w-40:H-h-330"}[o["logo_pos"]]
