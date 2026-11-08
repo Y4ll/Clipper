@@ -1486,7 +1486,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     got = {"v": False}
     logf = jdir / "grabacion.log"
     # si una forma de abrir el directo no avanza, prueba la siguiente (cada una mas simple)
-    variants = [(True, True, True), (True, False, True), (True, False, False), (False, False, False)]
+    variants = [(True, False, False), (True, True, False), (True, False, True), (False, False, False)]
     try:
         for n, (bsf, oldest, reconn) in enumerate(variants):
             cmd = build(bsf, oldest, reconn)
