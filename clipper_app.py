@@ -1945,6 +1945,23 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="error", msg=str(e)[-300:] or "No se pudo analizar el video.")
 
 
+def save_extras(clip, dest, length, ai):
+    """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
+    try:
+        subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.5, length * 0.35):.2f}",
+                        "-i", str(clip), "-frames:v", "1", "-q:v", "3", str(Path(dest).with_suffix(".jpg"))],
+                       stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        pass
+    ai = ai or {}
+    if ai.get("title") or ai.get("desc") or ai.get("tags"):
+        try:
+            txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", []))) if x)
+            Path(dest).with_suffix(".txt").write_text(txt + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+
 def render_job(job_id, video, segments, o):
     job, jdir = JOBS[job_id], WORK / job_id
     state = rt(job_id)
@@ -2108,6 +2125,8 @@ def render_job(job_id, video, segments, o):
                     saved = str(dest)
                 except OSError:
                     warn(f"No se pudo guardar el clip {i} en la carpeta.")
+                else:
+                    save_extras(out, dest, out_len, ai)
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),

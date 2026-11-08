@@ -23,6 +23,7 @@ Requisitos: Windows 10/11 de 64 bits, 4 GB de RAM (8 GB mejor). Clipper abre su 
 - **Velocidad:** *Rápido* (menos calidad, mucho más veloz) o *Mejor calidad*.
 - **Tarjeta de video:** si tienes NVIDIA, Intel o AMD, la usa sola; arriba a la derecha ves si está activa. Si falla, usa el procesador.
 - **Selección inteligente:** además del volumen, escucha lo que se dice para elegir mejor. Tarda más en analizar.
+- **Portada y texto para publicar:** si guardas los clips en una carpeta, junto a cada clip se deja una portada (.jpg) y, si la IA puso titulo, un .txt con titulo, descripcion y hashtags listos para copiar.
 - **Cola:** puedes soltar varios videos; se procesan uno tras otro.
 - **Que la IA elija los momentos (opcional):** con tu clave de Gemini, la IA reordena los mejores candidatos. Solo se envían tiempos y notas de volumen, nunca el video.
 - **Clips automáticos en directo:** al pegar un directo, activa «Sacar clips automáticamente mientras graba». Elige cada cuánto analiza (3, 15 o 30 min); la cantidad y la duración de los clips salen de los controles «Cantidad de clips» y «Duración de cada clip».
