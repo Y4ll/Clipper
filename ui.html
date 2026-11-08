@@ -566,7 +566,7 @@ function paint(){
   $("#subLangBox").classList.toggle("hidden",!S.subs);
   $("#subStyleBox").classList.toggle("hidden",!S.subs);$("#trBox").classList.toggle("hidden",!S.subs);
   document.querySelectorAll("#partsN .chip").forEach(b=>b.classList.toggle("on",+b.dataset.n===S.parts_n));
-  $("#partsN").classList.toggle("hidden",!S.parts);$("#partsSel").value=S.parts?(S.parts_auto?"auto":String(S.parts_n)):"0";
+  $("#partsN").classList.toggle("hidden",!S.parts||!!S.parts_auto);$("#partsSel").value=S.parts?(S.parts_auto?"auto":String(S.parts_n)):"0";
   $("#partsNote").textContent=S.parts?(S.parts_auto?`Automático: cada momento abarca su parte del video (hasta 10 min) y se corta en tantas partes de ${S.len} s como quepan. Sin tope fijo.`:`Cada momento dura ${S.len*S.parts_n} s y sale en ${S.parts_n} partes de ${S.len} s.`):"";
   $("#music_vol").value=S.music_vol;$("#mvv").textContent=S.music_vol;
   $("#outDirTxt").textContent=S.out_dir?S.out_dir:"Sin carpeta elegida";

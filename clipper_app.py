@@ -1081,8 +1081,11 @@ def smart_rank(job_id, video, cands, want, length, lang, jdir, job, query=""):
         sc, snippet, match = 0.0, "", False
         if time.time() - t0 < limit:
             try:
-                cues = transcribe(job_id, video, m["start"], m["len"], lang, jdir, 100 + i)
-                sc, snippet = speech_score(cues or [], m["len"])
+                # momentos largos (partes automaticas): se escucha solo una muestra del centro
+                samp = min(m["len"], 90)
+                cues = transcribe(job_id, video, m["start"] + (m["len"] - samp) / 2, samp,
+                                  lang, jdir, 100 + i)
+                sc, snippet = speech_score(cues or [], samp)
                 if terms:
                     full = norm_text(" ".join(c[2] for c in (cues or [])))
                     match = any(t in full for t in terms)
