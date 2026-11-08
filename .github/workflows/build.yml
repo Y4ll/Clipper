@@ -13,6 +13,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: publicar-release   # un solo build a la vez: evita que dos publiquen el Release juntos
+  cancel-in-progress: false
+
 jobs:
   build:
     runs-on: windows-latest
