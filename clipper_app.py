@@ -227,7 +227,10 @@ def monitor_check_once():
         if not s["enabled"]:
             continue
         url = s["url"]
-        live = streamer_is_live(url)
+        with MONITOR_LOCK:   # si ya se esta grabando este canal, no hace falta preguntar a yt-dlp otra vez
+            prev_st = MONITOR.get(url) or {}
+            recording = bool(prev_st.get("live")) and monitor_job_active(prev_st.get("job_id"))
+        live = True if recording else streamer_is_live(url)
         start = False
         with MONITOR_LOCK:
             st = MONITOR.setdefault(url, {"live": False, "job_id": None})
