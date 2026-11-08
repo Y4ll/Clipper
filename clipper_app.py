@@ -2580,7 +2580,7 @@ def check_update():
         sha = str(data.get("target_commitish", ""))[:7]
         asset = next((a for a in data.get("assets", []) if a.get("name") == "ClipperSetup.exe"), None)
         if asset and re.fullmatch(r"[0-9a-f]{7}", sha) and sha != BUILD[:7]:
-            lite = next((a for a in data.get("assets", []) if a.get("name") == "Clipper.exe"), None)
+            lite = next((a for a in data.get("assets", []) if a.get("name") == "Clipper-update.exe"), None)
             UPDATE.update(available=True, version=sha, url=asset["browser_download_url"],
                           lite_url=(lite or {}).get("browser_download_url", ""))
     except Exception:  # noqa: BLE001

@@ -77,7 +77,6 @@ jobs:
           if (-not (Test-Path pack\whisper\whisper-cli.exe) -or -not (Test-Path pack\whisper\ggml-base-q5_1.bin)) {
             throw "Falta Whisper (whisper-cli.exe o el modelo): el build se detiene para no publicar una version sin subtitulos"
           }
-          Compress-Archive -Path pack\* -DestinationPath Clipper-Windows.zip
 
       - name: Crear instalador (Inno Setup)
         shell: pwsh
@@ -86,19 +85,20 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (-not (Test-Path output\ClipperSetup.exe)) { throw "No se creó ClipperSetup.exe" }
+          Copy-Item pack\Clipper.exe output\Clipper-update.exe   # lo usa la app para actualizarse sola (~22 MB)
 
       - uses: actions/upload-artifact@v4
         with:
           name: Clipper-Windows
           path: |
-            Clipper-Windows.zip
             output/ClipperSetup.exe
+            output/Clipper-update.exe
 
-      - name: Publicar Release (instalador y zip)
+      - name: Publicar Release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release delete latest --cleanup-tag -y --repo ${{ github.repository }}
           $global:LASTEXITCODE = 0
-          gh release create latest output/ClipperSetup.exe pack/Clipper.exe Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga ClipperSetup.exe para instalar Clipper con acceso directo y desinstalador. Clipper-Windows.zip es la versión portátil (descomprime y abre Clipper.exe). Las dos traen ffmpeg.exe."
+          gh release create latest output/ClipperSetup.exe output/Clipper-update.exe --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga e instala ClipperSetup.exe. Clipper-update.exe lo usa la app para actualizarse sola: no hace falta bajarlo."
