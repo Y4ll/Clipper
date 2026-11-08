@@ -2580,14 +2580,16 @@ def check_update():
         sha = str(data.get("target_commitish", ""))[:7]
         asset = next((a for a in data.get("assets", []) if a.get("name") == "ClipperSetup.exe"), None)
         if asset and re.fullmatch(r"[0-9a-f]{7}", sha) and sha != BUILD[:7]:
-            UPDATE.update(available=True, version=sha, url=asset["browser_download_url"])
+            lite = next((a for a in data.get("assets", []) if a.get("name") == "Clipper.exe"), None)
+            UPDATE.update(available=True, version=sha, url=asset["browser_download_url"],
+                          lite_url=(lite or {}).get("browser_download_url", ""))
     except Exception:  # noqa: BLE001
         pass
     UPDATE["state"] = "done"
 
 
 def install_update():
-    """Empieza a bajar el instalador nuevo en segundo plano. Devuelve True si arranco."""
+    """Empieza a bajar la actualizacion en segundo plano. Devuelve True si arranco."""
     url = UPDATE.get("url", "")
     if not IS_WIN or not url.startswith(UPDATE_PREFIX):
         return False
@@ -2598,35 +2600,66 @@ def install_update():
     return True
 
 
+def _fetch_file(url, dest, min_size):
+    """Baja url a dest (con progreso, reanudando si quedo a medias). Valida que sea un .exe."""
+    dest = Path(dest)
+    part = dest.with_name(dest.name + ".part")
+    if dest.exists() and dest.stat().st_size > min_size and dest.read_bytes()[:2] == b"MZ":
+        return dest   # ya estaba bajado
+    have = part.stat().st_size if part.exists() else 0
+    req = urllib.request.Request(url, headers={"User-Agent": "Clipper"})
+    if have:
+        req.add_header("Range", f"bytes={have}-")
+    with urllib.request.urlopen(req, timeout=60) as r:
+        resumed = have > 0 and getattr(r, "status", 200) == 206
+        total = int(r.headers.get("Content-Length") or 0) + (have if resumed else 0)
+        got, last = (have if resumed else 0), time.time()
+        with open(part, "ab" if resumed else "wb") as f:
+            while True:
+                chunk = r.read(256 * 1024)
+                if not chunk:
+                    break
+                f.write(chunk)
+                got += len(chunk)
+                if total and time.time() - last > 0.3:
+                    last = time.time()
+                    UPDATE.update(pct=int(got * 100 / total), msg=f"{got // 1048576} de {total // 1048576} MB")
+    if part.stat().st_size < min_size or part.read_bytes()[:2] != b"MZ":
+        part.unlink(missing_ok=True)
+        raise RuntimeError("El archivo bajado no es valido.")
+    part.replace(dest)
+    return dest
+
+
+def _apply_lite_update(new_exe):
+    """Cambia Clipper.exe por el nuevo: un script espera a que esta app se cierre, lo reemplaza y lo abre."""
+    exe = Path(sys.executable)
+    bat = Path(tempfile.gettempdir()) / "clipper_update.bat"
+    bat.write_text(
+        "@echo off\r\nset n=0\r\n:retry\r\nping 127.0.0.1 -n 3 >nul\r\n"
+        f'move /Y "{new_exe}" "{exe}" >nul 2>&1\r\n'
+        "if not errorlevel 1 goto ok\r\nset /a n+=1\r\nif %n% LSS 20 goto retry\r\nexit /b 1\r\n:ok\r\n"
+        f'start "" "{exe}"\r\ndel "%~f0"\r\n', encoding="ascii", errors="replace")
+    subprocess.Popen(["cmd", "/c", str(bat)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, creationflags=0x00000008 | 0x00000200 | NO_WINDOW)
+    threading.Timer(1.0, lambda: os._exit(0)).start()
+
+
 def _download_update(url):
     ver = re.sub(r"[^0-9a-f]", "", str(UPDATE.get("version", "")))[:7] or "nuevo"
+    lite = UPDATE.get("lite_url", "")
+    if lite and getattr(sys, "frozen", False):   # actualizacion ligera: solo Clipper.exe (~22 MB)
+        try:
+            exe = Path(sys.executable)
+            new_exe = _fetch_file(lite, exe.with_name("Clipper.new.exe"), 5_000_000)
+            UPDATE.update(dl="launching", pct=100, msg="Reiniciando Clipper...")
+            _apply_lite_update(new_exe)
+            return
+        except Exception:  # noqa: BLE001
+            UPDATE.update(pct=0, msg="La actualizacion ligera fallo; bajando el instalador completo...")
     dest = Path(tempfile.gettempdir()) / f"ClipperSetup-{ver}.exe"
-    part = dest.with_suffix(".part")
     try:
-        if not (dest.exists() and dest.stat().st_size > 1000000 and dest.read_bytes()[:2] == b"MZ"):
-            have = part.stat().st_size if part.exists() else 0   # reanuda si quedo a medias
-            req = urllib.request.Request(url, headers={"User-Agent": "Clipper"})
-            if have:
-                req.add_header("Range", f"bytes={have}-")
-            with urllib.request.urlopen(req, timeout=60) as r:
-                resumed = have > 0 and getattr(r, "status", 200) == 206
-                total = int(r.headers.get("Content-Length") or 0) + (have if resumed else 0)
-                got, last = (have if resumed else 0), time.time()
-                with open(part, "ab" if resumed else "wb") as f:
-                    while True:
-                        chunk = r.read(256 * 1024)
-                        if not chunk:
-                            break
-                        f.write(chunk)
-                        got += len(chunk)
-                        if total and time.time() - last > 0.3:
-                            last = time.time()
-                            UPDATE.update(pct=int(got * 100 / total),
-                                          msg=f"{got // 1048576} de {total // 1048576} MB")
-            if part.stat().st_size < 1000000 or part.read_bytes()[:2] != b"MZ":
-                part.unlink(missing_ok=True)
-                raise RuntimeError("El archivo bajado no es un instalador valido.")
-            part.replace(dest)
+        _fetch_file(url, dest, 1_000_000)
     except Exception as e:  # noqa: BLE001
         UPDATE.update(dl="error", msg=str(e)[:150] or "No se pudo bajar la actualizacion.")
         return
