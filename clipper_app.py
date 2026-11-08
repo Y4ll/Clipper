@@ -138,7 +138,7 @@ FONT_CANDIDATES = [
 
 SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -1581,7 +1581,7 @@ def clean_opts(raw, seg_len=120):
         "res": int(pick("res", (720, 1080), 1080)), "punch": bool(raw.get("punch")),
         "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean", "green", "pop", "red"), "karaoke"),
         "sub_translate": bool(raw.get("sub_translate")),
-        "parts": bool(raw.get("parts")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
+        "parts": bool(raw.get("parts")), "parts_full": bool(raw.get("parts") and raw.get("parts_full")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
         "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
         "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
@@ -2215,7 +2215,15 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         moments = None
         smart_used = False
         ai_rank_used = False
-        if smart and energy and max(energy) >= 20:
+        full = bool(cfg_p.get("parts") and cfg_p.get("parts_full"))
+        if full:   # sin elegir momentos: todo el video, del segundo 0 al final, en partes iguales
+            plen = max(8, int(cfg_p.get("len") or 30))
+            npart = max(1, math.ceil(duration / plen))
+            each = duration / npart
+            moments = [{"start": round(k * each, 1), "len": round(each, 1), "score": 0, "points": 0}
+                       for k in range(npart)]
+            note = f"Todo el video en {npart} partes de {int(round(each))} s"
+        if moments is None and smart and energy and max(energy) >= 20:
             query = smart.get("query", "")
             use_ai_rank = smart.get("ai_rank") and get_gemini_key()
             use_whisper = find_whisper()
@@ -2245,11 +2253,11 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
                         note = "Momentos elegidos por la IA"
         if moments is None:
             moments = pick_moments(energy, duration, length, want)
-        if snap and energy and max(energy) >= 20:
+        if not full and snap and energy and max(energy) >= 20:
             moments = snap_ends(moments, energy, duration)
-        if energy and max(energy) >= 20:
+        if not full and energy and max(energy) >= 20:
             moments = score_moments(moments, energy, smart_used)
-        if not energy or max(energy) < 20:
+        if not full and (not energy or max(energy) < 20):
             note = "No se detecto sonido util en este video: repartí los clips parejos, ajustalos a mano."
         if smart and smart.get("query") and not find_whisper():
             note = "Esta instalacion no trae Whisper: no se pudo buscar por lo que se dice."
@@ -2318,7 +2326,9 @@ def render_job(job_id, video, segments, o):
             except OSError:
                 out_dir = None
                 job["warnings"].append("No se pudo usar la carpeta de guardado.")
-        if o["parts"]:   # un momento largo se corta en partes seguidas: PARTE 1/3, 2/3...
+        if o.get("parts_full"):   # todo el video, del primer al ultimo segundo, en partes seguidas
+            segments = [dict(sg, part=(i + 1, len(segments))) for i, sg in enumerate(segments)][:600]
+        elif o["parts"]:   # un momento largo se corta en partes seguidas: PARTE 1/3, 2/3...
             expanded = []
             for sg in segments:
                 n = max(1, round(sg["len"] / max(8, o["part_len"])))
@@ -3059,7 +3069,8 @@ class Handler(BaseHTTPRequestHandler):
             self._json({"error": "No encuentro el video original."}, 400)
             return
         segs = []
-        for s in (body.get("segments") or [])[:40]:
+        full = bool(((body.get("opts") or {}).get("parts")) and ((body.get("opts") or {}).get("parts_full")))
+        for s in (body.get("segments") or [])[:600 if full else 40]:
             try:
                 start = max(0.0, float(s.get("start")))
                 length = max(3.0, min(600.0, float(s.get("len"))))
