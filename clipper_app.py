@@ -1574,6 +1574,31 @@ def save_settings(data):
     tmp.replace(SETTINGS_FILE)
 
 
+# ---------------------------------------------------------------- plantillas
+TEMPLATES_FILE = DATA_DIR / "templates.json"
+TEMPLATE_SKIP = {"texts", "intro_seen", "out_dir", "yt_auto", "yt_privacy", "fps30"}   # no son de estilo: no se guardan
+MAX_TEMPLATES = 30
+
+
+def load_templates():
+    try:
+        data = json.loads(TEMPLATES_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for name, st in (data.items() if isinstance(data, dict) else []):
+        if isinstance(st, dict) and str(name).strip():
+            out[str(name)[:40]] = {k: v for k, v in st.items() if k in SETTING_KEYS and k not in TEMPLATE_SKIP}
+    return out
+
+
+def save_templates(items):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = TEMPLATES_FILE.with_suffix(".tmp")
+    tmp.write_text(json.dumps(items, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(TEMPLATES_FILE)
+
+
 def asset_path(role):
     found = sorted(ASSET_DIR.glob(role + ".*")) if ASSET_DIR.is_dir() else []
     return found[0] if found else None
@@ -2977,6 +3002,8 @@ class Handler(BaseHTTPRequestHandler):
                         "max_per_day": YT_MAX_PER_DAY})
         elif u.path == "/settings":
             self._json(load_settings())
+        elif u.path == "/templates":
+            self._json({"templates": load_templates()})
         elif u.path == "/assets":
             self._json({r: (asset_path(r).name if asset_path(r) else None)
                         for r in ("logo", "filler", "music")})
@@ -3173,6 +3200,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._json({"ok": True})
             except (OSError, ValueError):
                 self._json({"error": "No se pudieron guardar los ajustes."}, 400)
+        elif u.path in ("/templates/save", "/templates/delete"):
+            body = self._body_json(30000) or {}
+            name = re.sub(r"\s+", " ", str(body.get("name") or "")).strip()[:40]
+            items = load_templates()
+            try:
+                if not name:
+                    self._json({"error": "Ponle un nombre a la plantilla."}, 400)
+                    return
+                if u.path == "/templates/delete":
+                    items.pop(name, None)
+                else:
+                    st = body.get("settings")
+                    if not isinstance(st, dict):
+                        self._json({"error": "Faltan los ajustes."}, 400)
+                        return
+                    if name not in items and len(items) >= MAX_TEMPLATES:
+                        self._json({"error": f"Maximo {MAX_TEMPLATES} plantillas."}, 400)
+                        return
+                    items[name] = {k: v for k, v in st.items()
+                                   if k in SETTING_KEYS and k not in TEMPLATE_SKIP}
+                save_templates(items)
+                self._json({"ok": True, "templates": items})
+            except (OSError, ValueError):
+                self._json({"error": "No se pudo guardar la plantilla."}, 400)
         elif u.path == "/asset/delete":
             role = q.get("role", [""])[0]
             if role in ("logo", "filler", "music"):

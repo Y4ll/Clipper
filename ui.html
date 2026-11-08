@@ -384,6 +384,9 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <button class="chip" data-p="talk" title="Fondo borroso, clips más largos, subtítulos">Charla / podcast</button>
       <button class="chip" data-p="hype" title="Zoom, vibración y gancho, clips cortos">Máximo hype</button>
     </div>
+    <div class="fld"><label for="tplSel">Mis plantillas:</label><select id="tplSel"><option value="">— ninguna —</option></select> <button class="chip" id="tplApply" type="button">Aplicar</button> <button class="chip" id="tplDel" type="button">Borrar</button></div>
+    <div class="fld"><label for="tplName">Guardar estos ajustes como:</label><input id="tplName" type="text" maxlength="40" placeholder="Ej: RD JAVI"> <button class="chip" id="tplSave" type="button">Guardar</button></div>
+    <p class="note" id="tplNote" style="margin:0"></p>
     <details class="more"><summary>Plataforma</summary>
       <div class="chips" id="preset">
         <button class="chip" data-v="tiktok">TikTok · 30 s</button><button class="chip" data-v="reels">Reels · 30 s</button><button class="chip" data-v="shorts">Shorts · 45 s</button><button class="chip" data-v="custom">Personalizado</button>
@@ -612,6 +615,21 @@ document.querySelectorAll("#presets1 .chip").forEach(b=>b.onclick=()=>{
   const p=Object.assign({},PRE[b.dataset.p]);
   if(!CAPS.whisper){p.subs=false;p.smart=false;p.cut_pauses=false}
   Object.assign(S,p);paint();persist()});
+/* ---------- plantillas guardadas ---------- */
+let TPLS={};
+async function loadTpls(sel){
+  try{TPLS=(await (await API("/templates")).json()).templates||{}}catch(e){return}
+  const s=$("#tplSel");s.innerHTML='<option value="">— ninguna —</option>'+Object.keys(TPLS).map(n=>'<option value="'+esc(n)+'">'+esc(n)+'</option>').join("");
+  if(sel&&TPLS[sel])s.value=sel}
+$("#tplApply").onclick=()=>{const n=$("#tplSel").value,t=TPLS[n];if(!t)return;const p=JSON.parse(JSON.stringify(t));
+  if(!CAPS.whisper){p.subs=false;p.smart=false;p.cut_pauses=false}
+  Object.assign(S,p);paint();renderTexts();updateGen();persist();$("#tplNote").textContent="Plantilla aplicada: "+n};
+$("#tplSave").onclick=async()=>{const n=$("#tplName").value.trim();if(!n){$("#tplNote").textContent="Ponle un nombre a la plantilla.";return}
+  const r=await post("/templates/save",{name:n,settings:S});
+  $("#tplNote").textContent=r.ok?"Plantilla guardada: "+n:(r.error||"No se pudo guardar.");
+  if(r.ok){await loadTpls(n);$("#tplName").value=""}};
+$("#tplDel").onclick=async()=>{const n=$("#tplSel").value;if(!n)return;const r=await post("/templates/delete",{name:n});
+  $("#tplNote").textContent=r.ok?"Plantilla borrada: "+n:(r.error||"No se pudo borrar.");loadTpls()};
 /* ---------- capacidades ---------- */
 let CAPS={};
 async function loadCaps(){
@@ -928,7 +946,7 @@ $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.pre
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s);if(!s.fps30){S.fps=30;S.fps30=true;persist()}}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);loadYoutube();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
   if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
