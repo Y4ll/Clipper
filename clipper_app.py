@@ -56,6 +56,8 @@ if sys.stderr is None:
 
 IS_WIN = os.name == "nt"
 NO_WINDOW = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW
+BELOW_NORMAL = 0x00004000 if IS_WIN else 0   # prioridad baja: cortes y renders ceden ante la grabacion
+ABOVE_NORMAL = 0x00008000 if IS_WIN else 0   # prioridad alta: la grabacion del directo no debe perder datos
 
 
 def resource_path(name):
@@ -448,13 +450,22 @@ def rt(job_id):
     return RT.setdefault(job_id, {"cancel": threading.Event(), "procs": set(), "lock": threading.Lock()})
 
 
+def live_recording_active():
+    """True mientras algun directo se esta grabando (lo demas debe ceder CPU para no causar huecos)."""
+    try:
+        return any(j.get("live") for j in list(JOBS.values()))
+    except RuntimeError:
+        return False
+
+
 def run_proc(cmd, cwd=None, job_id=None, on_line=None):
     """Ejecuta un programa, se puede cancelar desde fuera. Devuelve el final de su salida."""
     state = rt(job_id) if job_id else None
     if state and state["cancel"].is_set():
         raise Cancelled()
+    flags = NO_WINDOW | (BELOW_NORMAL if live_recording_active() else 0)
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, cwd=cwd, creationflags=NO_WINDOW)
+                         stderr=subprocess.STDOUT, cwd=cwd, creationflags=flags)
     if state:
         with state["lock"]:
             state["procs"].add(p)
@@ -1364,6 +1375,55 @@ LIVE_MIN_POINTS = 35       # nota minima para que un momento de un directo se co
 LIVE_MAX_SPAN = 32 * 60    # un tramo nunca analiza mas de 32 min (30 de intervalo + solape)
 
 
+def video_gaps(video, min_gap=0.6):
+    """Huecos de video (se pierden fotogramas pero el audio sigue): lista de (inicio, fin) en segundos.
+
+    Lee solo los tiempos de cada fotograma (sin decodificar), asi que tarda ~2 s por cada 30 min."""
+    try:
+        r = subprocess.run([FFMPEG, "-v", "error", "-nostdin", "-i", str(video), "-map", "0:v:0",
+                            "-c", "copy", "-f", "framecrc", "-"], stdin=subprocess.DEVNULL,
+                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300,
+                           creationflags=NO_WINDOW)
+    except Exception:  # noqa: BLE001
+        return []
+    tb, pts = 1.0 / 90000, []
+    for line in r.stdout.decode("utf-8", "ignore").splitlines():
+        if line.startswith("#tb 0:"):
+            try:
+                a, b = line.split()[-1].split("/")
+                tb = float(a) / float(b)
+            except (ValueError, ZeroDivisionError):
+                pass
+        elif line and line[0] == "0":
+            f = line.split(",")
+            try:
+                pts.append(int(f[1]) * tb)
+            except (IndexError, ValueError):
+                continue
+    pts.sort()
+    return [(a, b) for a, b in zip(pts, pts[1:]) if b - a > min_gap]
+
+
+def fit_around_gaps(start, length, gaps, pad=0.3):
+    """Recorta un momento para que no incluya huecos de video. Devuelve (inicio, largo) o None."""
+    end = start + length
+    free, cur = [], start
+    for a, b in gaps:
+        if b + pad <= cur or a - pad >= end:
+            continue
+        if a - pad > cur:
+            free.append((cur, a - pad))
+        cur = max(cur, b + pad)
+    if end > cur:
+        free.append((cur, end))
+    if not free:
+        return None
+    a, b = max(free, key=lambda x: x[1] - x[0])
+    if b - a < max(8.0, 0.5 * length):
+        return None
+    return round(a, 1), round(b - a, 1)
+
+
 def _frag_cut(src, dst, start, dur):
     """Copia un tramo del directo que se esta grabando (sin tocar el archivo principal)."""
     try:
@@ -1576,7 +1636,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             for n, (bsf, oldest, reconn) in enumerate(variants):
                 cmd = build(out, bsf, oldest, reconn, part_num)
                 p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+                                     stderr=subprocess.STDOUT, creationflags=NO_WINDOW | ABOVE_NORMAL)
                 with state["lock"]:
                     state["procs"].add(p)
                     state["stdin"] = p.stdin
@@ -1730,6 +1790,23 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
 
 def auto_render(job_id, video, moments):
     """Lote de un directo: corta los clips solo con los ajustes guardados y los guarda en la carpeta elegida."""
+    gaps = video_gaps(video)
+    if gaps:
+        fixed, lost = [], 0
+        for m in moments:
+            fit = fit_around_gaps(float(m["start"]), float(m.get("len") or 30), gaps)
+            if fit:
+                fixed.append(dict(m, start=fit[0], len=fit[1]))
+            else:
+                lost += 1
+        total = round(sum(b - a for a, b in gaps), 1)
+        JOBS[job_id].setdefault("_pre_warn", []).append(
+            f"El directo tuvo {len(gaps)} hueco(s) sin imagen ({total} s en total, suele ser el directo o la conexion). "
+            f"Se recortaron los clips para evitarlos" + (f" y se saltaron {lost}." if lost else "."))
+        moments = fixed
+        if not moments:
+            JOBS[job_id].update(state="done", msg="Todos los momentos caian en un hueco de video", pct=100)
+            return
     par = JOBS[job_id].get("_live_parent")
     if par and not JOBS[job_id].get("_direct"):
         # directo: solo momentos fuertes y que no repitan lo ya cortado en rondas anteriores
@@ -1863,6 +1940,7 @@ def render_job(job_id, video, segments, o):
     try:
         job.update(state="rendering", msg="Preparando...", pct=0, clips=[], saved=[], warnings=[],
                    ready_clips=[])
+        job["warnings"].extend(job.pop("_pre_warn", []))
         font = find_font()
         if (o["texts"] or o["subs"]) and not font:
             job["warnings"].append("No se encontro una fuente para los textos; salieron sin texto.")
