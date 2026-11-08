@@ -1456,13 +1456,13 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     job["name"] = title + ".mp4"
     job["_rec_sec"] = 0.0
 
-    def build(bsf):
+    def build(bsf, oldest=True, reconn=True):
         cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
         if headers:
             cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
-        if stream.startswith("http"):   # si se corta la red un momento, reintenta
+        if stream.startswith("http") and reconn:   # si se corta la red un momento, reintenta
             cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
-        if ".m3u8" in stream and not job.get("_live_edge"):
+        if ".m3u8" in stream and oldest and not job.get("_live_edge"):
             cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
         cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy"]
         if bsf:   # el audio AAC de los directos HLS necesita esto para entrar en un mp4
@@ -1482,10 +1482,15 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
 
     started_clipper = False
-    tail = deque(maxlen=10)
+    tail = deque(maxlen=12)
+    got = {"v": False}
+    logf = jdir / "grabacion.log"
+    # si una forma de abrir el directo no avanza, prueba la siguiente (cada una mas simple)
+    variants = [(True, True, True), (True, False, True), (True, False, False), (False, False, False)]
     try:
-        for attempt, bsf in enumerate((True, False)):
-            p = subprocess.Popen(build(bsf), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        for n, (bsf, oldest, reconn) in enumerate(variants):
+            cmd = build(bsf, oldest, reconn)
+            p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                  stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
             with state["lock"]:
                 state["procs"].add(p)
@@ -1496,26 +1501,49 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                 threading.Thread(target=_live_clipper, args=(job_id, out, state, live_opts),
                                  daemon=True).start()
             t0 = time.time()
+            stalled = {"v": False}
+
+            def watchdog(p=p, t0=t0, stalled=stalled):
+                while p.poll() is None and not state["cancel"].is_set():
+                    time.sleep(1)
+                    if not got["v"] and time.time() - t0 > 30:
+                        stalled["v"] = True     # 30 s sin recibir video: se reintenta distinto
+                        try:
+                            p.kill()
+                        except Exception:  # noqa: BLE001
+                            pass
+                        return
+            threading.Thread(target=watchdog, daemon=True).start()
             try:
                 for raw in p.stdout:
                     line = raw.decode("utf-8", errors="ignore").strip()
-                    tail.append(line)
+                    if line and not re.match(r"^(frame|fps|stream_\d|bitrate|total_size|out_time|dup_frames|drop_frames|speed|progress)", line):
+                        tail.append(line)
+                    if line.startswith("out_time_us=") and job.get("_rec_sec", 0) > 0.5:
+                        got["v"] = True
                     on_line(line)
                 p.wait()
             finally:
                 with state["lock"]:
                     state["procs"].discard(p)
                     state["stdin"] = None
-            quick_fail = (time.time() - t0 < 20 and job.get("_rec_sec", 0) < 2)
-            if state["cancel"].is_set() or not (quick_fail and p.returncode):
-                break    # grabo bien (o se paro a proposito); no hace falta reintentar
+            try:
+                with open(logf, "a", encoding="utf-8") as lf:
+                    lf.write(f"intento {n + 1} bsf={bsf} oldest={oldest} reconnect={reconn} "
+                             f"codigo={p.returncode} avance={job.get('_rec_sec', 0):.1f}s\n"
+                             + "\n".join(tail) + "\n")
+            except OSError:
+                pass
+            if state["cancel"].is_set() or got["v"]:
+                break
+            job["msg"] = f"El directo no respondio, probando otra forma ({n + 2}/{len(variants)})..."
     finally:
         job["live"] = False
         job["_rec_done"] = True      # la grabacion termino (el analisis puede seguir)
     if state["cancel"].is_set():
         raise Cancelled()
     if not out.is_file() or out.stat().st_size < 10000:
-        raise RuntimeError("No se pudo grabar el directo. " + " ".join(tail)[-200:])
+        raise RuntimeError("No se pudo grabar el directo. " + " | ".join(list(tail)[-3:])[-300:])
     job["offset"] = 0
     return out
 
