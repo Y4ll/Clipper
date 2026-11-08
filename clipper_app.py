@@ -143,7 +143,8 @@ FONT_CANDIDATES = [
 SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
-                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
+                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips",
+                "tt_auto"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -474,6 +475,68 @@ def yt_upload_clips(job_id, clips, privacy):
                 job["warnings"].append(f"Subido a YouTube ({privacy}): https://youtu.be/{vid}")
             except Exception as e:  # noqa: BLE001
                 job["warnings"].append("YouTube: no se pudo subir un clip (" + str(e)[:120] + ")")
+
+
+# ------------------------------------------------- subida a TikTok (tiktok-uploader)
+TT_FILE = DATA_DIR / "tiktok_cookies.json"   # cookies de sesión; nunca van a la página
+
+def tt_connected():
+    return TT_FILE.is_file() and TT_FILE.stat().st_size > 100
+
+def tt_login():
+    """Abre Chromium visible para que el usuario inicie sesión en TikTok y guarda las cookies."""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        raise RuntimeError("Playwright no está instalado. Se instala solo la primera vez.")
+    with sync_playwright() as pw:
+        browser = pw.chromium.launch(headless=False,
+                                     args=["--start-maximized"])
+        ctx = browser.new_context(no_viewport=True)
+        page = ctx.new_page()
+        page.goto("https://www.tiktok.com/login", wait_until="domcontentloaded")
+        # Esperar hasta que el usuario llegue al feed principal (máx 3 min)
+        try:
+            page.wait_for_url("**/foryou**", timeout=180_000)
+        except Exception:
+            pass
+        cookies = ctx.cookies()
+        TT_FILE.write_text(json.dumps(cookies), encoding="utf-8")
+        try:
+            os.chmod(TT_FILE, 0o600)
+        except OSError:
+            pass
+        browser.close()
+
+def tt_upload_file(path, title):
+    """Sube un video a TikTok. Devuelve True si OK, lanza excepción si falla."""
+    if not tt_connected():
+        raise RuntimeError("No hay sesión de TikTok. Ve a Ajustes → TikTok y pulsa Conectar.")
+    try:
+        from tiktok_uploader.upload import TikTokUploader
+    except ImportError:
+        raise RuntimeError("tiktok-uploader no está instalado. Se instala automáticamente en el próximo inicio.")
+    uploader = TikTokUploader(cookies=str(TT_FILE), headless=True)
+    ok = uploader.upload_video(str(path), description=title[:2200], skip_split_window=True)
+    uploader.close()
+    return ok
+
+def tt_upload_clips(job_id, clips):
+    """Sube una lista de clips de un trabajo a TikTok."""
+    job = JOBS.get(job_id, {})
+    cfg = load_settings()
+    if not bool(cfg.get("tt_auto")) or not tt_connected():
+        return
+    for c in clips:
+        f = Path(c.get("path", ""))
+        if not f.is_file():
+            continue
+        title = c.get("title") or f.stem
+        try:
+            tt_upload_file(f, title)
+            job.setdefault("tiktok_uploaded", []).append(f.name)
+        except Exception as e:
+            job.setdefault("warnings", []).append("TikTok: no se pudo subir " + f.name + " (" + str(e)[:100] + ")")
 
 
 def read_build():
@@ -2602,6 +2665,9 @@ def render_job(job_id, video, segments, o):
         if o.get("yt_upload") and job["clips"]:
             threading.Thread(target=yt_upload_clips, args=(job_id, list(job["clips"]), o["yt_privacy"]),
                              daemon=True).start()
+        if job["clips"]:
+            threading.Thread(target=tt_upload_clips, args=(job_id, list(job["clips"])),
+                             daemon=True).start()
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
@@ -3037,6 +3103,9 @@ class Handler(BaseHTTPRequestHandler):
                         "connected": bool(cfg.get("refresh_token")), "auth": dict(YT_AUTH),
                         "auto": bool(st.get("yt_auto")), "privacy": st.get("yt_privacy") or "private",
                         "max_per_day": YT_MAX_PER_DAY})
+        elif u.path == "/tiktok":
+            st = load_settings()
+            self._json({"connected": tt_connected(), "auto": bool(st.get("tt_auto"))})
         elif u.path == "/settings":
             self._json(load_settings())
         elif u.path == "/templates":
@@ -3130,6 +3199,25 @@ class Handler(BaseHTTPRequestHandler):
             YT_FILE.unlink(missing_ok=True)
             YT_TOKEN.update(value="", exp=0.0)
             YT_AUTH.update(status="idle", msg="")
+            self._json({"ok": True})
+        elif u.path == "/tiktok/connect":
+            # Lanza el login en un hilo para no bloquear el servidor
+            def _do_login():
+                try:
+                    tt_login()
+                except Exception as e:
+                    pass  # los errores los verá el usuario al recargar
+            threading.Thread(target=_do_login, daemon=True).start()
+            self._json({"ok": True, "msg": "Abriendo el navegador… inicia sesión en TikTok y ciérralo cuando llegues al feed principal."})
+        elif u.path == "/tiktok/disconnect":
+            TT_FILE.unlink(missing_ok=True)
+            self._json({"ok": True})
+        elif u.path == "/tiktok/config":
+            body = self._body_json() or {}
+            cfg = load_settings()
+            if "auto" in body:
+                cfg["tt_auto"] = bool(body["auto"])
+            save_settings(cfg)
             self._json({"ok": True})
         elif u.path == "/streamers/config":
             body = self._body_json() or {}

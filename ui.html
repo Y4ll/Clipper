@@ -67,7 +67,7 @@ button{cursor:pointer}
 .grid.focus .panel:not(.tg):not(.p-gen){display:none}.grid.focus .panel.tg{grid-column:span 24}
 .p-video{grid-column:span 17}.p-live{grid-column:span 7}
 .p-qty{grid-column:span 7}.p-fmt{grid-column:span 5}.p-fx{grid-column:span 6}.p-subs{grid-column:span 6}
-.p-yt{grid-column:span 11}.p-adv{grid-column:span 8}.p-gen{grid-column:span 5}
+.p-yt{grid-column:span 11}.p-tt{grid-column:span 13}.p-adv{grid-column:span 8}.p-gen{grid-column:span 5}
 .lbl,label.lbl{display:block;font-size:14px;color:var(--text);margin:0 0 6px}
 .note{font-size:12px;color:var(--muted);margin-top:8px;line-height:1.4}
 .err{color:var(--red)}
@@ -233,7 +233,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
   .top{grid-template-columns:200px 1fr 220px}
   .p-video{grid-column:span 24}.p-live{grid-column:span 12}.p-qty{grid-column:span 12}
   .p-fmt{grid-column:span 12}.p-fx{grid-column:span 12}.p-subs{grid-column:span 12}
-  .p-yt{grid-column:span 24}.p-adv{grid-column:span 14}.p-gen{grid-column:span 10}
+  .p-yt{grid-column:span 24}.p-tt{grid-column:span 24}.p-adv{grid-column:span 14}.p-gen{grid-column:span 10}
 }
 @media(max-width:980px){
   .body{grid-template-columns:1fr}
@@ -309,6 +309,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
   <button class="nav" data-go="p-fx"><svg class="ic"><use href="#i-bolt"/></svg>Efectos</button>
   <button class="nav" data-go="p-subs"><svg class="ic"><use href="#i-chat"/></svg>Subtítulos e IA</button>
   <button class="nav" data-go="p-yt"><svg class="ic" style="color:var(--red)"><use href="#i-yt"/></svg>YouTube</button>
+  <button class="nav" data-go="p-tt"><svg class="ic" style="color:#ee1d52"><use href="#i-phone"/></svg>TikTok</button>
   <button class="nav" data-go="p-adv"><svg class="ic"><use href="#i-gear"/></svg>Ajustes</button>
   <div class="brandcard"><svg class="emb" viewBox="0 0 84 62" aria-hidden="true"><use href="#i-emb"/></svg><b class="disp">Clipper</b><small>v<span class="buildtxt"></span></small><small>By Y4ll</small></div>
 </nav>
@@ -487,6 +488,25 @@ input[type=range]{accent-color:var(--yellow);width:100%}
     <details class="more"><summary>Cómo configurarlo</summary>
       <p class="note" style="margin:0 0 6px">Usa la API oficial de Google con tu cuenta. Una sola vez: en console.cloud.google.com crea un proyecto, activa «YouTube Data API v3» y crea una credencial «ID de cliente de OAuth» tipo <b>App de escritorio</b>; pega aquí el ID y el secreto. Empieza en «Privado» para probar.</p>
       <p class="note" style="margin:0">Subir muchos clips repetidos de un mismo streamer puede hacer que YouTube marque el canal. Usa solo contenido tuyo o con permiso.</p>
+    </details>
+  </section>
+
+  <!-- 6b · TIKTOK -->
+  <section class="panel p-tt" id="p-tt">
+    <h2><svg class="ic" style="color:#ee1d52"><use href="#i-phone"/></svg>TikTok <span class="note" id="ttState" style="margin:0 0 0 auto;font-family:system-ui;font-style:normal;text-transform:none"></span></h2>
+    <div class="yt">
+      <div>
+        <p class="note" style="margin:0 0 8px">Clipper abre tu navegador una sola vez para que inicies sesión. Después sube solo.</p>
+        <button class="btn go" id="ttConnect"><svg class="ic"><use href="#i-link"/></svg>Conectar con TikTok</button>
+        <button class="btn sm danger hidden" id="ttOff" style="width:100%;margin-top:8px">Desconectar</button>
+      </div>
+      <div>
+        <label class="ck"><input type="checkbox" id="tt_auto"><span>Publicar en TikTok<small>Sube solos los clips terminados a tu cuenta</small></span></label>
+        <p class="note" id="ttMsg" style="margin-top:6px"></p>
+      </div>
+    </div>
+    <details class="more"><summary>Cómo funciona</summary>
+      <p class="note" style="margin:0">Pulsa «Conectar con TikTok»: se abre el navegador en tiktok.com/login. Inicia sesión normalmente y cuando llegues al feed principal ciérralo. Clipper guarda las cookies solo en tu PC. Con «Publicar en TikTok» activo, cada clip que se genera se sube solo. Usa solo contenido tuyo o con permiso.</p>
     </details>
   </section>
 
@@ -695,6 +715,22 @@ $("#ytConnect").onclick=async()=>{
   if(!YTPOLL)YTPOLL=setInterval(loadYoutube,2000)};
 $("#ytOff").onclick=async()=>{await post("/youtube/disconnect");$("#ytMsg").textContent="";loadYoutube()};
 $("#yt_auto").onchange=e=>{S.yt_auto=e.target.checked;persist()};
+/* ---------- TikTok ---------- */
+async function loadTikTok(){
+  let d;try{d=await(await API("/tiktok")).json()}catch(e){return}
+  $("#ttState").textContent=d.connected?"· conectado":"";
+  $("#ttConnect").classList.toggle("hidden",d.connected);
+  $("#ttOff").classList.toggle("hidden",!d.connected);
+  $("#tt_auto").disabled=!d.connected;
+  $("#tt_auto").checked=!!d.auto&&d.connected;
+}
+$("#ttConnect").onclick=async()=>{
+  const r=await post("/tiktok/connect");
+  $("#ttMsg").textContent=r.msg||"Abriendo navegador…";
+  setTimeout(loadTikTok,5000);setTimeout(loadTikTok,15000);setTimeout(loadTikTok,30000);
+};
+$("#ttOff").onclick=async()=>{await post("/tiktok/disconnect");$("#ttMsg").textContent="";loadTikTok()};
+$("#tt_auto").onchange=e=>{post("/tiktok/config",{auto:e.target.checked})};
 $("#clip_every_min").onchange=e=>{S.clip_every_min=Number(e.target.value)||15;persist()};
 $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
 /* ---------- monitor de directos ---------- */
@@ -991,7 +1027,7 @@ $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.pre
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s);if(!s.fps30){S.fps=30;S.fps30=true;persist()}}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTikTok();loadTpls();
   if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");

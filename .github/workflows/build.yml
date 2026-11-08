@@ -30,9 +30,9 @@ jobs:
       - name: Crear Clipper.exe
         shell: pwsh
         run: |
-          python -m pip install pyinstaller pywebview yt-dlp
+          python -m pip install pyinstaller pywebview yt-dlp tiktok-uploader
           "${{ github.sha }}".Substring(0,7) | Out-File -Encoding ascii -NoNewline build.txt
-          python -m PyInstaller --onefile --noconsole --icon icon.ico --add-data "icon.ico;." --add-data "ui.html;." --add-data "build.txt;." --collect-all yt_dlp --collect-all webview --collect-all clr_loader --collect-all pythonnet --name Clipper clipper_app.py
+          python -m PyInstaller --onefile --noconsole --icon icon.ico --add-data "icon.ico;." --add-data "ui.html;." --add-data "build.txt;." --collect-all yt_dlp --collect-all webview --collect-all clr_loader --collect-all pythonnet --collect-all tiktok_uploader --name Clipper clipper_app.py
 
       - name: Descargar ffmpeg.exe y armar el zip
         shell: pwsh
