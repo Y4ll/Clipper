@@ -4,7 +4,7 @@ App de Windows para sacar clips verticales (9:16) de videos y streams largos. De
 
 ## Instalar (Windows)
 1. Entra a **Releases** → **Clipper para Windows**.
-2. Baja **ClipperSetup.exe** y ábrelo (crea el acceso directo y el desinstalador). Después, Clipper se actualiza solo desde el botón **Actualizar** (baja unos 22 MB).
+2. Baja **ClipperSetup.exe** y ábrelo (crea el acceso directo y el desinstalador). Si prefieres no instalar, baja **Clipper-Windows.zip**, descomprímelo y abre `Clipper.exe`.
 3. Ya trae ffmpeg, la descarga por link (yt-dlp) y los subtítulos (Whisper). No necesitas instalar nada más.
 
 **Si Windows bloquea Clipper** («Windows protegió su PC»): clic en **Más información → Ejecutar de todas formas**, o añade una exclusión en Seguridad de Windows. Pasa porque el programa no tiene firma digital (es de pago).
