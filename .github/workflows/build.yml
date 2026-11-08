@@ -101,4 +101,4 @@ jobs:
         run: |
           gh release delete latest --cleanup-tag -y --repo ${{ github.repository }}
           $global:LASTEXITCODE = 0
-          gh release create latest output/ClipperSetup.exe pack/Clipper.exe Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga ClipperSetup.exe para instalar Clipper con acceso directo y desinstalador. Clipper-Windows.zip es la versión portátil (descomprime y abre Clipper.exe). Las dos traen ffmpeg.exe."
+          gh release create latest output/ClipperSetup.exe Clipper-Windows.zip --repo ${{ github.repository }} --target ${{ github.sha }} --title "Clipper para Windows" --notes "Descarga ClipperSetup.exe para instalar Clipper con acceso directo y desinstalador. Clipper-Windows.zip es la versión portátil (descomprime y abre Clipper.exe). Las dos traen ffmpeg.exe."
