@@ -1085,7 +1085,10 @@ def gemini_test(key=None):
     body = json.dumps({"contents": [{"parts": [{"text": "Responde solo: OK"}]}],
                        "generationConfig": {"temperature": 0, "maxOutputTokens": 8}}).encode("utf-8")
     last = "No se pudo conectar con Google."
-    for model in GEMINI_MODELS:
+    busy = False
+    for model in [*GEMINI_MODELS, GEMINI_MODELS[0]]:   # el ultimo intento repite el primero (503 suele ser pasajero)
+        if busy:
+            time.sleep(2)
         req = urllib.request.Request(
             f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
             headers={"Content-Type": "application/json", "x-goog-api-key": key})
@@ -1100,6 +1103,10 @@ def gemini_test(key=None):
                         e.code, f"Google respondio con error {e.code}.")
             if e.code in (400, 401, 403, 429):
                 return False, last
+            if e.code in (500, 502, 503, 504):
+                busy = True
+                last = (f"Google esta saturado ahora (error {e.code}). No es tu clave: "
+                        "vuelve a probar en un minuto.")
         except Exception:  # noqa: BLE001
             continue
     return False, last
