@@ -1340,9 +1340,11 @@ def download_video(job_id, url, jdir, rng=None):
                 job["pct"] = int(2 + frac * 8)
                 job["msg"] = f"Descargando el video... {int(frac * 100)}%"
 
+    _cfg = load_settings()   # calidad rapida o 720p: baja el video en 720p (mitad de peso, mas rapido de bajar y de cortar)
+    dl_h = 1080 if (_cfg.get("quality") == "best" and str(_cfg.get("res")) != "720") else 720
     opts = {"outtmpl": str(jdir / "input.%(ext)s"), "noplaylist": True, "quiet": True,
             "no_warnings": True, "progress_hooks": [hook], "merge_output_format": "mp4",
-            "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
+            "format": f"bv*[height<={dl_h}]+ba/b[height<={dl_h}]/b",
             "concurrent_fragment_downloads": 8}
     if os.path.isabs(FFMPEG):
         opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
