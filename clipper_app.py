@@ -21,8 +21,6 @@ Uso:
 
 import argparse
 import array
-import base64
-import hashlib
 import importlib.util
 import json
 import math
@@ -37,14 +35,12 @@ import tempfile
 import textwrap
 import threading
 import time
-import urllib.error
-import urllib.parse
 import urllib.request
 import uuid
 import wave
 import webbrowser
 from collections import deque
-from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
@@ -56,8 +52,6 @@ if sys.stderr is None:
 
 IS_WIN = os.name == "nt"
 NO_WINDOW = 0x08000000 if IS_WIN else 0  # CREATE_NO_WINDOW
-BELOW_NORMAL = 0x00004000 if IS_WIN else 0   # prioridad baja: cortes y renders ceden ante la grabacion
-ABOVE_NORMAL = 0x00008000 if IS_WIN else 0   # prioridad alta: la grabacion del directo no debe perder datos
 
 
 def resource_path(name):
@@ -93,9 +87,10 @@ RT = {}                   # id -> {cancel: Event, proc: Popen}
 ENERGY = {}               # id -> energia por segundo (para zoom en los picos)
 ENCODER = {"name": None, "ready": False}
 HAS_ASS = [False]
-UPDATE = {"state": "idle", "available": False, "version": "", "url": "",
-          "dl": "idle", "pct": 0, "msg": ""}
-UPDATE_PREFIX = "https://github.com/Y4ll/Clipper/"
+UPDATE = {"state": "idle", "available": False, "version": "", "url": ""}
+
+STREAMERS_FILE = DATA_DIR / "streamers.json"
+MONITOR = {}              # url -> {"name", "live", "job_id", "last_check", "enabled"}
 
 FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
@@ -108,326 +103,99 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
-                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min"}
+                "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "ai_tone", "res"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
 
 
-# ------------------------------------------------------- monitor de directos
-STREAMERS_FILE = DATA_DIR / "streamers.json"
-MONITOR_EVERY = 120        # segundos entre revisiones
-MONITOR_SEGMENT_MIN = 60   # cada grabacion dura como maximo esto; si el directo sigue, arranca otra
-MONITOR_MAX_HOURS = 6      # tope por directo para no llenar el disco
-MONITOR = {}               # url -> {live, job_id, last_check, recorded, error}
-MONITOR_LOCK = threading.Lock()
-MONITOR_WAKE = threading.Event()
-
-
 def load_streamers():
+    """Lee la lista de streamers del disco."""
     try:
         data = json.loads(STREAMERS_FILE.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
     except (OSError, ValueError):
         return []
-    out = []
-    for s in data if isinstance(data, list) else []:
-        if isinstance(s, dict) and re.match(r"^https?://\S+$", str(s.get("url", ""))):
-            out.append({"url": str(s["url"])[:300], "name": str(s.get("name") or "")[:60],
-                        "enabled": bool(s.get("enabled", True))})
-    return out
 
 
-def save_streamers(items):
+def save_streamers(lst):
+    """Guarda la lista de streamers."""
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     tmp = STREAMERS_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(items[:50], ensure_ascii=False), encoding="utf-8")
+    tmp.write_text(json.dumps(lst, ensure_ascii=False), encoding="utf-8")
     tmp.replace(STREAMERS_FILE)
 
 
-def normalize_streamer_url(text):
-    """Acepta un link o solo el usuario (se asume Kick)."""
-    t = str(text or "").strip()
-    if re.match(r"^https?://\S+$", t) and len(t) <= 300:
-        return t
-    if re.match(r"^[A-Za-z0-9_\-]{2,40}$", t):
-        return "https://kick.com/" + t
-    return ""
-
-
-def streamer_is_live(url):
-    """True si el canal esta en directo ahora. Cualquier error cuenta como 'no esta'."""
+def _check_one_streamer(entry):
+    """Comprueba si un streamer esta en directo ahora. Devuelve (is_live, title, url_stream)."""
     if not importlib.util.find_spec("yt_dlp"):
-        return False
+        return False, "", ""
     import yt_dlp
+    url = entry.get("url", "")
+    if not url:
+        return False, "", ""
     try:
-        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True, "noplaylist": True,
-                               "socket_timeout": 20}) as y:
+        with yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True,
+                                "noplaylist": True, "skip_download": True}) as y:
             meta = y.extract_info(url, download=False) or {}
-        return bool(meta.get("is_live"))
+        # Para canales de Kick/YouTube, el resultado puede ser una playlist con entries
+        if meta.get("_type") == "playlist":
+            entries = meta.get("entries") or []
+            live = [e for e in entries if e and e.get("is_live")]
+            if live:
+                e = live[0]
+                return True, str(e.get("title") or entry.get("name") or ""), url
+            return False, "", ""
+        return bool(meta.get("is_live")), str(meta.get("title") or entry.get("name") or ""), url
     except Exception:  # noqa: BLE001
-        return False
-
-
-def monitor_job_active(job_id):
-    """True mientras ese trabajo siga grabando (el analisis posterior ya no cuenta)."""
-    job = JOBS.get(job_id or "")
-    return bool(job) and job.get("state") in ("queued", "analyzing", "rendering") \
-        and not job.get("_rec_done")
-
-
-def monitor_start_segment(url, name, st):
-    job_id = new_job(name or url)
-    JOBS[job_id]["monitor"] = True
-    if st.get("segments"):
-        JOBS[job_id]["_live_edge"] = True     # los tramos siguientes empiezan desde ahora, sin repetir
-    with MONITOR_LOCK:
-        st["job_id"] = job_id
-        st["segments"] = st.get("segments", 0) + 1
-    smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
-    threading.Thread(target=analyze_job,
-                     args=(job_id, None, url, 5, 30, (0, None, MONITOR_SEGMENT_MIN), smart, True),
-                     daemon=True).start()
-
-
-def monitor_check_once():
-    for s in load_streamers():
-        if not s["enabled"]:
-            continue
-        url = s["url"]
-        live = streamer_is_live(url)
-        start = False
-        with MONITOR_LOCK:
-            st = MONITOR.setdefault(url, {"live": False, "job_id": None})
-            st.update(live=live, last_check=time.time())
-            if not live:                    # directo terminado: el proximo vuelve a grabarse desde cero
-                for k in ("session_start", "segments", "fails", "stopped", "note"):
-                    st.pop(k, None)
-                if not monitor_job_active(st["job_id"]):
-                    st["job_id"] = None     # no arrastrar el trabajo del directo anterior
-                continue
-            if st.get("stopped") or monitor_job_active(st["job_id"]):
-                continue
-            prev = JOBS.get(st["job_id"] or "")
-            if prev and prev.get("state") == "cancelled":
-                st.update(stopped=True, note="Parado por ti: no se vuelve a grabar este directo.")
-                continue
-            if prev and prev.get("state") == "error":
-                st["fails"] = st.get("fails", 0) + 1
-                if st["fails"] >= 3:
-                    st.update(stopped=True, note="La grabacion fallo 3 veces seguidas: se dejo de intentar.")
-                    continue
-            now = time.time()
-            st.setdefault("session_start", now)
-            if now - st["session_start"] >= MONITOR_MAX_HOURS * 3600:
-                st.update(stopped=True, note=f"Tope de {MONITOR_MAX_HOURS} horas alcanzado en este directo.")
-                continue
-            start = True
-        if start:
-            monitor_start_segment(url, s["name"], st)
+        return False, "", ""
 
 
 def monitor_loop():
+    """Hilo que revisa periodicamente si los streamers configurados estan en directo."""
+    CHECK_INTERVAL = 120   # segundos entre comprobaciones por streamer
     while True:
-        try:
-            monitor_check_once()
-        except Exception:  # noqa: BLE001
-            pass
-        MONITOR_WAKE.wait(MONITOR_EVERY)
-        MONITOR_WAKE.clear()
-
-
-def streamers_view():
-    with MONITOR_LOCK:
-        mon = {k: dict(v) for k, v in MONITOR.items()}
-    out = []
-    for s in load_streamers():
-        st = mon.get(s["url"], {})
-        out.append(dict(s, live=bool(st.get("live")) and s["enabled"],
-                        job_id=st.get("job_id") if monitor_job_active(st.get("job_id")) else None,
-                        last_check=st.get("last_check"), note=st.get("note") or "",
-                        segments=st.get("segments", 0)))
-    return out
-
-
-# ------------------------------------------------- subida a YouTube (API oficial)
-YT_FILE = DATA_DIR / "youtube.json"      # client_id, client_secret y refresh_token: nunca van a la pagina
-YT_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-YT_TOKEN_URL = "https://oauth2.googleapis.com/token"
-YT_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
-YT_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
-YT_MAX_PER_DAY = 10        # tope propio: evita spam y que te marquen la cuenta
-YT_AUTH = {"status": "idle", "msg": ""}
-YT_TOKEN = {"value": "", "exp": 0.0}
-YT_LOCK = threading.Lock()
-YT_SENT = []               # momentos de las subidas de las ultimas 24 h
-
-
-def yt_load():
-    try:
-        data = json.loads(YT_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except (OSError, ValueError):
-        return {}
-
-
-def yt_save(data):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    YT_FILE.write_text(json.dumps(data), encoding="utf-8")
-    try:
-        os.chmod(YT_FILE, 0o600)
-    except OSError:
-        pass
-
-
-def yt_connected():
-    return bool(yt_load().get("refresh_token"))
-
-
-def yt_post_form(url, fields):
-    req = urllib.request.Request(url, data=urllib.parse.urlencode(fields).encode(), method="POST",
-                                 headers={"Content-Type": "application/x-www-form-urlencoded"})
-    try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            return json.load(r)
-    except urllib.error.HTTPError as e:
-        try:
-            body = json.loads(e.read())
-            msg = body.get("error_description") or str(body.get("error"))
-        except Exception:  # noqa: BLE001
-            msg = f"HTTP {e.code}"
-        raise RuntimeError(msg)
-
-
-def yt_access_token():
-    cfg = yt_load()
-    if YT_TOKEN["value"] and time.time() < YT_TOKEN["exp"] - 60:
-        return YT_TOKEN["value"]
-    if not cfg.get("refresh_token"):
-        raise RuntimeError("YouTube no esta conectado.")
-    r = yt_post_form(YT_TOKEN_URL, {"client_id": cfg.get("client_id", ""),
-                                    "client_secret": cfg.get("client_secret", ""),
-                                    "refresh_token": cfg["refresh_token"], "grant_type": "refresh_token"})
-    YT_TOKEN.update(value=r["access_token"], exp=time.time() + float(r.get("expires_in", 3000)))
-    return YT_TOKEN["value"]
-
-
-def yt_connect_start():
-    """Abre el permiso de Google en el navegador y espera la respuesta en 127.0.0.1 (flujo oficial de apps de escritorio)."""
-    cfg = yt_load()
-    if not cfg.get("client_id") or not cfg.get("client_secret"):
-        raise ValueError("Primero guarda el ID de cliente y el secreto de Google.")
-    verifier = secrets.token_urlsafe(48)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    state = secrets.token_urlsafe(12)
-    result = {}
-
-    class CB(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-        def do_GET(self):
-            q = parse_qs(urlparse(self.path).query)
-            if q.get("state", [""])[0] == state and (q.get("code") or q.get("error")):
-                result.update(code=q.get("code", [""])[0], error=q.get("error", [""])[0])
-                text = "Listo. Ya puedes cerrar esta pestaña y volver a Clipper."
-            else:
-                text = "Respuesta no valida."
-            data = f"<meta charset='utf-8'><body style='font-family:sans-serif;background:#111;color:#fc0;padding:40px'>{text}".encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-    srv = HTTPServer(("127.0.0.1", 0), CB)
-    srv.timeout = 5
-    redirect = f"http://127.0.0.1:{srv.server_address[1]}"
-    url = YT_AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_id": cfg["client_id"], "redirect_uri": redirect, "response_type": "code",
-        "scope": YT_SCOPE, "access_type": "offline", "prompt": "consent", "state": state,
-        "code_challenge": challenge, "code_challenge_method": "S256"})
-    YT_AUTH.update(status="waiting", msg="Esperando tu permiso en el navegador...")
-
-    def wait():
-        end = time.time() + 300
-        try:
-            while not result and time.time() < end:
-                srv.handle_request()
-            if not result.get("code"):
-                YT_AUTH.update(status="error", msg="No se dio el permiso (o se acabo el tiempo).")
-                return
-            r = yt_post_form(YT_TOKEN_URL, {"code": result["code"], "client_id": cfg["client_id"],
-                                            "client_secret": cfg["client_secret"], "redirect_uri": redirect,
-                                            "grant_type": "authorization_code", "code_verifier": verifier})
-            if not r.get("refresh_token"):
-                raise RuntimeError("Google no devolvio permiso permanente. Vuelve a conectar.")
-            cfg2 = yt_load()
-            cfg2["refresh_token"] = r["refresh_token"]
-            yt_save(cfg2)
-            YT_TOKEN.update(value=r.get("access_token", ""), exp=time.time() + float(r.get("expires_in", 3000)))
-            YT_AUTH.update(status="ok", msg="Conectado")
-        except Exception as e:  # noqa: BLE001
-            YT_AUTH.update(status="error", msg=str(e)[:200])
-        finally:
-            srv.server_close()
-
-    threading.Thread(target=wait, daemon=True).start()
-    return url
-
-
-def yt_upload_file(path, title, desc, tags, privacy):
-    tok = yt_access_token()
-    meta = {"snippet": {"title": title[:100], "description": desc[:4900], "tags": tags[:10],
-                        "categoryId": "22"},
-            "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
-    size = Path(path).stat().st_size
-    init = urllib.request.Request(
-        YT_UPLOAD_URL + "?uploadType=resumable&part=snippet,status",
-        data=json.dumps(meta).encode("utf-8"), method="POST",
-        headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8",
-                 "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)})
-    try:
-        with urllib.request.urlopen(init, timeout=60) as r:
-            loc = r.headers["Location"]
-        with open(path, "rb") as f:
-            put = urllib.request.Request(loc, data=f, method="PUT",
-                                         headers={"Content-Length": str(size), "Content-Type": "video/mp4"})
-            with urllib.request.urlopen(put, timeout=900) as r:
-                return json.load(r)["id"]
-    except urllib.error.HTTPError as e:
-        try:
-            msg = json.loads(e.read())["error"]["errors"][0].get("reason") or f"HTTP {e.code}"
-        except Exception:  # noqa: BLE001
-            msg = f"HTTP {e.code}"
-        raise RuntimeError(msg)
-
-
-def yt_upload_clips(job_id, clips, privacy):
-    """Sube los clips terminados de un lote, de uno en uno, con tope diario propio."""
-    job, jdir = JOBS[job_id], WORK / job_id
-    privacy = privacy if privacy in ("private", "unlisted", "public") else "private"
-    for n, c in enumerate(clips, 1):
-        with YT_LOCK:
-            now = time.time()
-            YT_SENT[:] = [t for t in YT_SENT if now - t < 86400]
-            if len(YT_SENT) >= YT_MAX_PER_DAY:
-                job["warnings"].append(f"YouTube: tope de {YT_MAX_PER_DAY} subidas por dia; este clip no se subio.")
+        time.sleep(15)     # espera inicial para que la app arranque
+        streamers = load_streamers()
+        for entry in streamers:
+            url = entry.get("url", "")
+            if not url or not entry.get("enabled", True):
                 continue
-            f = jdir / c["name"]
-            title = (str(c.get("title") or "").strip() or f"{str(job.get('name') or 'Clip')[:70]} ({n})") + " #Shorts"
-            tags = c.get("tags") or []
-            tags = [t.strip("# ") for t in (tags.split() if isinstance(tags, str) else tags)
-                    if isinstance(t, str) and t.strip("# ")]
-            desc = (str(c.get("desc") or "").strip() + "\n\n#Shorts " +
-                    " ".join("#" + t for t in tags[:3])).strip()
-            try:
-                vid = yt_upload_file(f, title, desc, tags, privacy)
-                YT_SENT.append(time.time())
-                job["warnings"].append(f"Subido a YouTube ({privacy}): https://youtu.be/{vid}")
-            except Exception as e:  # noqa: BLE001
-                job["warnings"].append("YouTube: no se pudo subir un clip (" + str(e)[:120] + ")")
+            st = MONITOR.setdefault(url, {"live": False, "job_id": None,
+                                          "last_check": 0, "name": entry.get("name", url)})
+            # Si ya tiene un job activo grabando, no lanzar otro
+            if st.get("job_id") and JOBS.get(st["job_id"], {}).get("state") in (
+                    "queued", "analyzing", "rendering"):
+                continue
+            now = time.time()
+            if now - st["last_check"] < CHECK_INTERVAL:
+                continue
+            st["last_check"] = now
+            is_live, title, _ = _check_one_streamer(entry)
+            st["live"] = is_live
+            st["name"] = title or entry.get("name") or url
+            if not is_live:
+                st["job_id"] = None
+                continue
+            # Esta en directo y no hay job: lanzar grabacion
+            st_cfg = load_settings()
+            want = int(clean_num(st_cfg.get("n"), 1, 40, 5))
+            length = int(clean_num(st_cfg.get("len"), 3, 600, 30))
+            lang = st_cfg.get("sub_lang") if st_cfg.get("sub_lang") in ("es", "en", "auto") else "es"
+            smart = {"lang": lang, "query": "", "ai_rank": bool(st_cfg.get("ai_rank")),
+                     "live_clips": True}
+            snap = st_cfg.get("snap") is not False
+            # Cap = 0 para que record_live use 10 min por defecto y siga grabando
+            rng = (0, None, 0)
+            job_id = new_job(st["name"] or url)
+            st["job_id"] = job_id
+            threading.Thread(target=analyze_job,
+                             args=(job_id, None, url, want, length, rng, smart, snap),
+                             daemon=True).start()
+        # Pausa larga entre rondas
+        time.sleep(max(0, CHECK_INTERVAL - 15))
 
 
 def read_build():
@@ -450,22 +218,13 @@ def rt(job_id):
     return RT.setdefault(job_id, {"cancel": threading.Event(), "procs": set(), "lock": threading.Lock()})
 
 
-def live_recording_active():
-    """True mientras algun directo se esta grabando (lo demas debe ceder CPU para no causar huecos)."""
-    try:
-        return any(j.get("live") for j in list(JOBS.values()))
-    except RuntimeError:
-        return False
-
-
 def run_proc(cmd, cwd=None, job_id=None, on_line=None):
     """Ejecuta un programa, se puede cancelar desde fuera. Devuelve el final de su salida."""
     state = rt(job_id) if job_id else None
     if state and state["cancel"].is_set():
         raise Cancelled()
-    flags = NO_WINDOW | (BELOW_NORMAL if live_recording_active() else 0)
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT, cwd=cwd, creationflags=flags)
+                         stderr=subprocess.STDOUT, cwd=cwd, creationflags=NO_WINDOW)
     if state:
         with state["lock"]:
             state["procs"].add(p)
@@ -614,10 +373,7 @@ def score_moments(moments, energy, smart_used):
             val = 0.5 * audio + 0.3 * m.get("speech", 0.0) + 0.1 * rise + 0.1 * dur
         else:
             val = 0.65 * audio + 0.2 * rise + 0.15 * dur
-        why = "Volumen %d%% · Subida al inicio %d%% · Duración %d%%" % (audio * 100, rise * 100, dur * 100)
-        if smart_used:
-            why = "Habla %d%% · " % (m.get("speech", 0.0) * 100) + why
-        out.append(dict(m, points=int(round(max(1, min(100, val * 100)))), why=why))
+        out.append(dict(m, points=int(round(max(1, min(100, val * 100))))))
     return out
 
 
@@ -1008,9 +764,6 @@ def write_ass(path, cues, font, style="karaoke"):
         size, outline, bstyle, back = 76, 14, 3, "&H99000000"
     elif style == "clean":
         size, per = 78, 4
-    elif style in ("green", "pop", "red"):
-        size, per = 88, 3
-    hot_col = {"green": "&H0050E04A&", "red": "&H004040FF&"}.get(style, "&H0000C4F5&")   # BGR
     head = ("[Script Info]\nScriptType: v4.00+\nPlayResX: 1080\nPlayResY: 1920\nWrapStyle: 2\n\n"
             "[V4+ Styles]\nFormat: Name,Fontname,Fontsize,PrimaryColour,SecondaryColour,OutlineColour,"
             "BackColour,Bold,Italic,Underline,StrikeOut,ScaleX,ScaleY,Spacing,Angle,BorderStyle,Outline,"
@@ -1034,9 +787,8 @@ def write_ass(path, cues, font, style="karaoke"):
                 parts = []
                 for j, (_a, _b, w) in enumerate(grp):
                     hot = j == i and style != "clean"
-                    color = hot_col if hot else "&H00FFFFFF&"   # BGR: amarillo F5C400
-                    grow = "{\\fscx118\\fscy118}" if (hot and style in ("pop", "green", "red")) else "{\\fscx100\\fscy100}"
-                    parts.append("{\\c" + color + "}" + grow + clean(w))
+                    color = "&H0000C4F5&" if hot else "&H00FFFFFF&"   # BGR: amarillo F5C400
+                    parts.append("{\\c" + color + "}" + clean(w))
                 text = " ".join(parts)
             lines.append(f"Dialogue: 0,{ass_time(a)},{ass_time(end)},Default,,0,0,0,," + text)
     Path(path).write_text(head + "\n".join(lines) + "\n", encoding="utf-8")
@@ -1129,8 +881,6 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
              "scale=1080:1920:flags=bilinear[bg];"
              "[b]scale=1080:-2[fg];"
              "[bg][fg]overlay=(W-w)/2:(H-h)/2[v0]")
-    if o["fps"] == 30:   # bajar a 30 fps al principio: todo lo demas procesa la mitad de cuadros en 60 fps
-        g = g.replace("[0:v]", "[0:v]fps=30,", 1)
     if keep:   # quitar pausas: solo pasan los tramos elegidos
         g = f"[0:v]select='{keep_expr(keep)}',setpts=N/FRAME_RATE/TB[sv];" + g.replace("[0:v]", "[sv]")
     state = {"last": "v0", "n": 0, "g": g}
@@ -1161,8 +911,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
         else:
             cr = "crop=1080:1920"
         stage(sc + "," + cr)
-    if o["fps"] == 60:
-        stage("fps=60")
+    if o["fps"] in (30, 60):
+        stage(f"fps={o['fps']}")
     if logo_idx is not None:
         pos = {"tl": "40:140", "tr": "W-w-40:140", "bl": "40:H-h-330",
                "br": "W-w-40:H-h-330"}[o["logo_pos"]]
@@ -1284,20 +1034,18 @@ def clean_opts(raw, seg_len=120):
         "subs": bool(raw.get("subs")),
         "sub_lang": pick("sub_lang", ("es", "en", "auto"), "es"),
         "logo_pos": pick("logo_pos", ("tl", "tr", "bl", "br"), "tr"),
-        "fps": int(pick("fps", (0, 30, 60), 30)),
+        "fps": int(pick("fps", (0, 30, 60), 0)),
         "quality": pick("quality", ("fast", "best"), "fast"),
         "ai_title": bool(raw.get("ai_title")),
         "ai_tone": pick("ai_tone", ("directo", "gracioso", "dramatico", "misterioso", "epico"), "directo"),
         "res": int(pick("res", (720, 1080), 1080)), "punch": bool(raw.get("punch")),
-        "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean", "green", "pop", "red"), "karaoke"),
+        "sub_style": pick("sub_style", ("karaoke", "one", "box", "clean"), "karaoke"),
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
         "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
         "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
-        "yt_upload": bool(raw.get("yt_upload")),
-        "yt_privacy": pick("yt_privacy", ("private", "unlisted", "public"), "private"),
     }
 
 
@@ -1342,11 +1090,9 @@ def download_video(job_id, url, jdir, rng=None):
                 job["pct"] = int(2 + frac * 8)
                 job["msg"] = f"Descargando el video... {int(frac * 100)}%"
 
-    _cfg = load_settings()   # calidad rapida o 720p: baja el video en 720p (mitad de peso, mas rapido de bajar y de cortar)
-    dl_h = 1080 if (_cfg.get("quality") == "best" and str(_cfg.get("res")) != "720") else 720
     opts = {"outtmpl": str(jdir / "input.%(ext)s"), "noplaylist": True, "quiet": True,
             "no_warnings": True, "progress_hooks": [hook], "merge_output_format": "mp4",
-            "format": f"bv*[height<={dl_h}]+ba/b[height<={dl_h}]/b",
+            "format": "bv*[height<=1080]+ba/b[height<=1080]/b",
             "concurrent_fragment_downloads": 8}
     if os.path.isabs(FFMPEG):
         opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
@@ -1381,185 +1127,80 @@ def download_video(job_id, url, jdir, rng=None):
     return max(files, key=lambda f: f.stat().st_size)
 
 
-LIVE_CLIP_EVERY = 15 * 60  # cada cuantos segundos grabados se analiza un tramo nuevo
-LIVE_MIN_POINTS = 35       # nota minima para que un momento de un directo se corte solo
-LIVE_MAX_SPAN = 32 * 60    # un tramo nunca analiza mas de 32 min (30 de intervalo + solape)
+LIVE_CLIP_EVERY = 5 * 60   # cada cuantos segundos grabados se saca un lote de clips
 
 
-def video_gaps(video, min_gap=0.6):
-    """Huecos de video (se pierden fotogramas pero el audio sigue): lista de (inicio, fin) en segundos.
+def _live_clipper(job_id, out, state, opts):
+    """Hilo que saca clips cada LIVE_CLIP_EVERY segundos mientras se graba el directo.
 
-    Lee solo los tiempos de cada fotograma (sin decodificar), asi que tarda ~2 s por cada 30 min."""
-    try:
-        r = subprocess.run([FFMPEG, "-v", "error", "-nostdin", "-i", str(video), "-map", "0:v:0",
-                            "-c", "copy", "-f", "framecrc", "-"], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300,
-                           creationflags=NO_WINDOW)
-    except Exception:  # noqa: BLE001
-        return []
-    tb, pts = 1.0 / 90000, []
-    for line in r.stdout.decode("utf-8", "ignore").splitlines():
-        if line.startswith("#tb 0:"):
-            try:
-                a, b = line.split()[-1].split("/")
-                tb = float(a) / float(b)
-            except (ValueError, ZeroDivisionError):
-                pass
-        elif line and line[0] == "0":
-            f = line.split(",")
-            try:
-                pts.append(int(f[1]) * tb)
-            except (IndexError, ValueError):
-                continue
-    pts.sort()
-    return [(a, b) for a, b in zip(pts, pts[1:]) if b - a > min_gap]
-
-
-def fit_around_gaps(start, length, gaps, pad=0.3):
-    """Recorta un momento para que no incluya huecos de video. Devuelve (inicio, largo) o None."""
-    end = start + length
-    free, cur = [], start
-    for a, b in gaps:
-        if b + pad <= cur or a - pad >= end:
-            continue
-        if a - pad > cur:
-            free.append((cur, a - pad))
-        cur = max(cur, b + pad)
-    if end > cur:
-        free.append((cur, end))
-    if not free:
-        return None
-    a, b = max(free, key=lambda x: x[1] - x[0])
-    if b - a < max(8.0, 0.5 * length):
-        return None
-    return round(a, 1), round(b - a, 1)
-
-
-def _frag_cut(src, dst, start, dur):
-    """Copia un tramo del directo que se esta grabando (sin tocar el archivo principal)."""
-    try:
-        subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{start:.2f}",
-                        "-i", str(src), "-t", f"{dur:.2f}", "-c", "copy", str(dst)],
-                       stdin=subprocess.DEVNULL, timeout=180, creationflags=NO_WINDOW)
-    except Exception:  # noqa: BLE001
-        return False
-    return dst.is_file() and dst.stat().st_size > 10000
-
-
-def spawn_live_child(parent_id, out, seg_start, seg_dur, opts, direct=False, part_offset=0.0):
-    """Crea un lote hijo con un tramo del directo. direct=True: se corta entero (boton 'Clip ya').
-
-    seg_start es relativo al archivo actual (input_N.mp4).
-    part_offset es el tiempo absoluto acumulado de partes anteriores.
-    _abs_offset = part_offset + seg_start: posicion real en el directo completo.
+    Espera a que haya suficiente video grabado, corta un fragmento temporal con ffmpeg
+    (nunca toca el archivo principal) y lanza un analyze_job secundario.
+    Cuando analyze_job termina la UI lo muestra como un job normal aparte.
     """
-    import datetime
-    ts = datetime.datetime.now().strftime("%H:%M")
-    child_id = new_job(f"{opts['name'][:40]} · {'Clip ya' if direct else 'tramo'} {ts}")
-    child = JOBS[child_id]
-    abs_offset = part_offset + float(seg_start)
-    child.update(_auto_render=True, _live_parent=parent_id, _abs_offset=abs_offset,
-                 _direct=bool(direct))
-    JOBS[parent_id].setdefault("children", []).append(child_id)
-    jdir = WORK / child_id
-    frag = jdir / "input.mp4"
-    if not _frag_cut(out, frag, seg_start, seg_dur):
-        child.update(state="error", msg="No se pudo cortar ese tramo del directo.")
-        return child_id
-    if direct:
-        child.update(state="ready", msg="Cortando el clip...", pct=100,
-                     duration=seg_dur, moments=[{"start": 0, "len": round(seg_dur), "points": 0}])
-        auto_render(child_id, frag, child["moments"])
-        return child_id
-    threading.Thread(target=analyze_job,
-                     args=(child_id, frag, None, opts["want"], opts["length"], None,
-                           opts["smart"], opts["snap"]), daemon=True).start()
-    return child_id
+    want = opts["want"]
+    length = opts["length"]
+    smart = opts["smart"]
+    snap = opts["snap"]
+    base_name = opts["name"]
+    clip_every = max(60, LIVE_CLIP_EVERY)      # minimo 1 min entre lotes
+    min_needed = length * max(2, want // 2)    # segundos minimos grabados para valer la pena
+    last_clip_at = 0.0
+    reported_sec = 0.0
 
-
-def _live_clipper(job_id, live_ctx, state, opts):
-    """Mientras se graba el directo, analiza cada tramo nuevo y corta los mejores momentos solos.
-
-    Cada ronda mira desde un poco antes de donde acabo la anterior (para no partir un momento
-    por la mitad) hasta casi el final de lo grabado. Al terminar cada parte hace una ronda final
-    de esa parte; al terminar el directo completo hace la ronda final global.
-
-    live_ctx es un dict compartido con record_live (acceso protegido por live_ctx["lock"]):
-      - "out"          : Path al archivo de la parte actual
-      - "part_offset"  : segundos grabados en partes anteriores
-      - "part_ended"   : threading.Event — record_live lo activa al terminar cada parte
-      - "part_ready"   : threading.Event — _live_clipper lo activa al terminar la ronda final
-    """
-    length = int(opts["length"])
-    clip_every = max(60, int(opts.get("clip_every") or LIVE_CLIP_EVERY))
-    min_needed = max(60, length * 2)
-    lock = live_ctx["lock"]
-    done_until = 0.0   # relativo a la parte actual
     while not state["cancel"].is_set():
         time.sleep(2)
-        job = JOBS.get(job_id)
-        if not job:
+        if state["cancel"].is_set():
             break
-
-        # Leer el contexto de la parte actual de forma atomica
-        with lock:
-            out = live_ctx["out"]
-            part_offset = float(live_ctx["part_offset"])
-            part_ended: threading.Event = live_ctx["part_ended"]
-            part_ready: threading.Event = live_ctx["part_ready"]
-
-        cur = float(job.get("_rec_sec", 0) or 0)
-        rec_done = bool(job.get("_rec_done"))
-        all_done = bool(job.get("_live_all_done"))
-
-        due = cur >= min_needed and cur - done_until >= clip_every
-        # "final": la parte termino Y hay material nuevo suficiente para analizar
-        final = part_ended.is_set() and cur - done_until >= 20
-
-        if part_ended.is_set() and not final:
-            if all_done:
-                break
-            # Parte terminada pero tramo demasiado corto: liberar de todos modos
-            if not part_ready.is_set():
-                part_ready.set()
+        # Seguimos mientras el job padre siga grabando (live=True en su dict)
+        if not JOBS.get(job_id, {}).get("live"):
+            break
+        try:
+            cur_sec = float(JOBS[job_id].get("_rec_sec", 0))
+        except (KeyError, TypeError, ValueError):
+            continue
+        if cur_sec < min_needed:
+            continue
+        if cur_sec - last_clip_at < clip_every:
             continue
 
-        if not (due or final):
+        # Cuanto video queremos analizar: lo que cabe en el lote actual
+        seg_dur = int(min(cur_sec, length * want * 1.5))
+        seg_start = max(0.0, cur_sec - seg_dur)
+
+        # Crear job hijo antes de copiar para que aparezca en la UI
+        import datetime
+        ts = datetime.datetime.now().strftime("%H:%M")
+        child_name = f"{base_name[:40]} · {ts}"
+        child_id = new_job(child_name)
+        child_jdir = WORK / child_id
+        child_jdir.mkdir(parents=True, exist_ok=True)
+        frag = child_jdir / "input.mp4"
+
+        # Copiar el fragmento con re-encode minimo para que el mp4 sea autocontenido
+        try:
+            subprocess.run(
+                [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+                 "-ss", str(seg_start), "-i", str(out),
+                 "-t", str(seg_dur), "-c", "copy", str(frag)],
+                timeout=120, creationflags=NO_WINDOW)
+        except Exception:  # noqa: BLE001
+            JOBS[child_id].update(state="error", msg="No se pudo cortar el fragmento del directo.")
             continue
 
-        sec_end = max(0.0, cur - 2)
-        sec_start = max(0.0, done_until - length)
-        if sec_end - sec_start > LIVE_MAX_SPAN:
-            sec_start = sec_end - LIVE_MAX_SPAN
-        if sec_end - sec_start < 15:
-            if final and not part_ready.is_set():
-                part_ready.set()   # nada que analizar: liberar de todos modos
+        if not frag.is_file() or frag.stat().st_size < 10000:
+            JOBS[child_id].update(state="error", msg="Fragmento del directo vacio.")
             continue
 
-        spawn_live_child(job_id, out, sec_start, sec_end - sec_start, opts,
-                         part_offset=part_offset)
-        done_until = sec_end
-
-        if final:
-            if all_done:
-                break
-            # Ronda final de esta parte terminada: avisar a record_live y preparar la siguiente
-            if not part_ready.is_set():
-                part_ready.set()
-            done_until = 0.0
+        last_clip_at = cur_sec
+        threading.Thread(target=analyze_job,
+                         args=(child_id, frag, None, want, length, None, smart, snap),
+                         daemon=True).start()
 
 
 def record_live(job_id, meta, jdir, rng, live_opts=None):
-    """Directo: graba en partes (input_1.mp4, input_2.mp4...) hasta que el directo termine.
-
-    Cada parte dura 'cap' minutos (por defecto 60). Al terminar una parte se comprueba si el
-    directo sigue en vivo; si es asi, se abre una nueva parte automaticamente.
-    _live_clipper se queda corriendo todo el tiempo y sabe en que parte esta gracias a live_ctx.
-    """
+    """Directo: graba lo que haya disponible (hasta N minutos) y se puede parar cuando quieras."""
     job, state = JOBS[job_id], rt(job_id)
-    given = int((rng[2] if rng and rng[2] else 0) or 0)
-    # Cap por parte: si el usuario no pone limite, 60 min por parte (con clipeo auto) o 10 sin el
-    cap = given or (60 if live_opts else 10)
+    cap = int((rng[2] if rng and rng[2] else 0) or 10)     # minutos como maximo
     stream = meta.get("url")
     headers = dict(meta.get("http_headers") or {})
     if not stream:
@@ -1569,282 +1210,58 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             headers = dict(fm[-1].get("http_headers") or headers)
     if not stream:
         raise RuntimeError("No pude abrir el directo.")
+    out = jdir / "input.mp4"
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
+    if headers:
+        cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
+    if ".m3u8" in stream:
+        cmd += ["-live_start_index", "-100000"]   # empieza por lo mas viejo que el directo guarde
+    cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy",
+            "-movflags", "frag_keyframe+empty_moov", str(out)]
+    job.update(live=True, msg="Grabando el directo...", pct=5)
     title = (str(meta.get("title") or "directo"))[:80]
-    job.update(live=True, msg="Conectando con el directo...", pct=3)
     job["name"] = title + ".mp4"
 
-    # Contexto compartido con _live_clipper.
-    # "lock" protege las actualizaciones atomicas de out/part_offset al cambiar de parte.
-    # "part_ended" : record_live lo activa cuando la parte termina de grabarse.
-    # "part_ready" : _live_clipper lo activa cuando termino la ronda final de esa parte.
-    live_ctx: dict = {
-        "lock": threading.Lock(),
-        "out": jdir / "input_1.mp4",
-        "part_offset": 0.0,
-        "part_ended": threading.Event(),
-        "part_ready": threading.Event(),
-    }
-    job["_live_out"] = str(live_ctx["out"])   # para /clipnow
+    # Lanzar hilo de clipeo automatico si se pidio
+    if live_opts:
+        live_opts["name"] = title
+        threading.Thread(target=_live_clipper,
+                         args=(job_id, out, state, live_opts),
+                         daemon=True).start()
 
-    def build(out_path, bsf, oldest=True, reconn=True, part_num=1):
-        cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1", "-nostats"]
-        if headers:
-            cmd += ["-headers", "".join(f"{k}: {v}\r\n" for k, v in headers.items())]
-        if stream.startswith("http") and reconn:
-            cmd += ["-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5"]
-        if ".m3u8" in stream and oldest and not job.get("_live_edge"):
-            cmd += ["-live_start_index", "-100000"]
-        cmd += ["-i", stream, "-t", str(cap * 60), "-c", "copy"]
-        if bsf:
-            cmd += ["-bsf:a", "aac_adtstoasc"]
-        return cmd + ["-movflags", "frag_keyframe+empty_moov", str(out_path)]
+    def on_line(line):
+        if line.startswith("out_time_us="):
+            try:
+                sec = int(line.split("=", 1)[1]) / 1e6
+            except ValueError:
+                return
+            job["_rec_sec"] = sec
+            job["msg"] = f"Grabando el directo... {fmt_time(sec)} (maximo {cap} min)"
+            job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
 
-    logf = jdir / "grabacion.log"
-    # si una forma de abrir el directo no avanza, prueba la siguiente (cada una mas simple)
-    variants = [(True, False, False), (True, True, False), (True, False, True), (False, False, False)]
-
-    started_clipper = False
-    part_num = 0
-    part_offset = 0.0   # segundos reales grabados en partes anteriores
-    first_out = None    # primer archivo valido (para devolver si no hay live_opts)
-
+    p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT, creationflags=NO_WINDOW)
+    with state["lock"]:
+        state["procs"].add(p)
+        state["stdin"] = p.stdin
+    tail = deque(maxlen=10)
     try:
-        while not state["cancel"].is_set():
-            part_num += 1
-            out = jdir / f"input_{part_num}.mp4"
-            with live_ctx["lock"]:
-                live_ctx["out"] = out
-                live_ctx["part_offset"] = part_offset
-                live_ctx["part_ended"] = threading.Event()   # nuevo evento: esta parte aun no termino
-                live_ctx["part_ready"] = threading.Event()   # _live_clipper aun no termino su ronda
-            job["_live_out"] = str(out)
-            job["_part_offset_snapshot"] = part_offset   # para /clipnow
-            job["_rec_sec"] = 0.0
-            job["_rec_done"] = False
-
-            partes_txt = f" (parte {part_num})" if part_num > 1 else ""
-            job.update(live=True, msg=f"Conectando con el directo{partes_txt}...", pct=3)
-
-            tail = deque(maxlen=12)
-            got = {"v": False}
-
-            def on_line(line, pnum=part_num):
-                if line.startswith("out_time_us="):
-                    try:
-                        sec = int(line.split("=", 1)[1]) / 1e6
-                    except ValueError:
-                        return
-                    job["_rec_sec"] = sec
-                    total_sec = part_offset + sec
-                    lotes = len(job.get("children", []))
-                    extra = f" · {lotes} tramo(s) analizados" if lotes else ""
-                    ptxt = f" · parte {pnum}" if pnum > 1 else ""
-                    job["msg"] = (f"Grabando el directo... {fmt_time(total_sec)} "
-                                  f"(max {cap} min/parte){ptxt}{extra}")
-                    job["pct"] = int(5 + min(1.0, sec / (cap * 60)) * 50)
-
-            # Intentar variantes hasta que alguna reciba video
-            for n, (bsf, oldest, reconn) in enumerate(variants):
-                cmd = build(out, bsf, oldest, reconn, part_num)
-                p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                     stderr=subprocess.STDOUT, creationflags=NO_WINDOW | ABOVE_NORMAL)
-                with state["lock"]:
-                    state["procs"].add(p)
-                    state["stdin"] = p.stdin
-
-                # Arrancar _live_clipper solo una vez, la primera vez que hay video
-                if live_opts and not started_clipper:
-                    started_clipper = True
-                    live_opts["name"] = title
-                    threading.Thread(target=_live_clipper,
-                                     args=(job_id, live_ctx, state, live_opts),
-                                     daemon=True).start()
-
-                t0 = time.time()
-                stalled = {"v": False}
-
-                def watchdog(p=p, t0=t0, stalled=stalled):
-                    while p.poll() is None and not state["cancel"].is_set():
-                        time.sleep(1)
-                        if not got["v"] and time.time() - t0 > 30:
-                            stalled["v"] = True
-                            try:
-                                p.kill()
-                            except Exception:  # noqa: BLE001
-                                pass
-                            return
-                threading.Thread(target=watchdog, daemon=True).start()
-
-                try:
-                    for raw in p.stdout:
-                        line = raw.decode("utf-8", errors="ignore").strip()
-                        if line and not re.match(
-                                r"^(frame|fps|stream_\d|bitrate|total_size|out_time|"
-                                r"dup_frames|drop_frames|speed|progress)", line):
-                            tail.append(line)
-                        if line.startswith("out_time_us=") and job.get("_rec_sec", 0) > 0.5:
-                            got["v"] = True
-                        on_line(line)
-                    p.wait()
-                finally:
-                    with state["lock"]:
-                        state["procs"].discard(p)
-                        state["stdin"] = None
-
-                try:
-                    with open(logf, "a", encoding="utf-8") as lf:
-                        lf.write(f"parte {part_num} intento {n + 1} bsf={bsf} oldest={oldest} "
-                                 f"reconnect={reconn} codigo={p.returncode} "
-                                 f"avance={job.get('_rec_sec', 0):.1f}s\n"
-                                 + "\n".join(tail) + "\n")
-                except OSError:
-                    pass
-
-                if state["cancel"].is_set() or got["v"]:
-                    break
-                job["msg"] = (f"El directo no respondio, probando otra forma "
-                              f"({n + 2}/{len(variants)})...")
-
-            # Marcar esta parte como terminada: _live_clipper hara su ronda final
-            job["_rec_done"] = True
-            live_ctx["part_ended"].set()
-
-            if state["cancel"].is_set():
-                break
-
-            if not got["v"]:
-                # Ninguna variante recibio video en esta parte
-                if part_num == 1:
-                    raise RuntimeError("No se pudo grabar el directo. "
-                                       + " | ".join(list(tail)[-3:])[-300:])
-                # En partes posteriores puede ser que el directo acabo: salir normal
-                job.update(msg="El directo parece haber terminado.", pct=100)
-                job["_live_all_done"] = True
-                break
-
-            if first_out is None:
-                first_out = out
-
-            # Acumular el tiempo grabado en esta parte
-            sec_recorded = float(job.get("_rec_sec", 0) or 0)
-            part_offset += sec_recorded
-
-            # Esperar a que _live_clipper termine la ronda final de esta parte (max 2 min)
-            # part_ready se activa cuando el clipper termino de analizar o no habia nada
-            part_ready_ev: threading.Event = live_ctx["part_ready"]
-            part_ready_ev.wait(timeout=120)
-            # (si expira el timeout seguimos igualmente: no bloqueamos el directo)
-
-            # Comprobar si el directo sigue en vivo
-            if job.get("_stop_requested"):
-                job.update(msg="Grabacion detenida por ti.", pct=100)
-                job["_live_all_done"] = True
-                break
-
-            # Solo seguir si el directo esta en vivo (y no se puso un limite manual)
-            if given:
-                job["_live_all_done"] = True
-                break
-
-            job.update(msg="Comprobando si el directo sigue en vivo...", pct=5)
-            still_live = streamer_is_live(meta.get("webpage_url") or meta.get("url") or "")
-            if not still_live:
-                job.update(msg="El directo ha terminado.", pct=100)
-                job["_live_all_done"] = True
-                break
-
-            # El directo sigue: preparar la siguiente parte
-            job.update(msg=f"El directo sigue. Arrancando parte {part_num + 1}...", pct=5)
-            # La siguiente parte empieza desde el borde en vivo (no rebobinar)
-            job["_live_edge"] = True
-
-            # Borrar la parte anterior solo cuando no queden hijos activos que la usen
-            # (hijos "activos" = en estado queued/analyzing/rendering)
-            prev_out = jdir / f"input_{part_num}.mp4"
-            if prev_out.is_file() and prev_out != first_out:
-                children_of_part = [
-                    cid for cid in JOBS.get(job_id, {}).get("children", [])
-                    if float(JOBS.get(cid, {}).get("_abs_offset", -1)) >= (part_offset - sec_recorded)
-                    and float(JOBS.get(cid, {}).get("_abs_offset", -1)) < part_offset
-                ]
-                # Esperar hasta 3 min a que todos los hijos de esta parte terminen
-                wait_start = time.time()
-                while time.time() - wait_start < 180:
-                    still_active = [
-                        cid for cid in children_of_part
-                        if JOBS.get(cid, {}).get("state") in ("queued", "analyzing", "rendering")
-                    ]
-                    if not still_active:
-                        break
-                    time.sleep(5)
-                try:
-                    prev_out.unlink()
-                    with open(logf, "a", encoding="utf-8") as lf:
-                        lf.write(f"parte {part_num}: archivo borrado "
-                                 f"(offset {part_offset - sec_recorded:.0f}s - {part_offset:.0f}s)\n")
-                except OSError:
-                    pass
-
+        for raw in p.stdout:
+            line = raw.decode("utf-8", errors="ignore").strip()
+            tail.append(line)
+            on_line(line)
+        p.wait()
     finally:
+        with state["lock"]:
+            state["procs"].discard(p)
+            state["stdin"] = None
         job["live"] = False
-        job["_rec_done"] = True
-        job["_live_all_done"] = True   # garantizar que _live_clipper termine
-
     if state["cancel"].is_set():
         raise Cancelled()
-    out_final = first_out or (jdir / "input_1.mp4")
-    if not out_final.is_file() or out_final.stat().st_size < 10000:
-        raise RuntimeError("No se pudo grabar el directo. " + " | ".join(list(tail)[-3:])[-300:])
+    if not out.is_file() or out.stat().st_size < 10000:
+        raise RuntimeError("No se pudo grabar el directo. " + " ".join(tail)[-200:])
     job["offset"] = 0
-    return out_final
-
-
-def auto_render(job_id, video, moments):
-    """Lote de un directo: corta los clips solo con los ajustes guardados y los guarda en la carpeta elegida."""
-    gaps = video_gaps(video)
-    if gaps:
-        fixed, lost = [], 0
-        for m in moments:
-            fit = fit_around_gaps(float(m["start"]), float(m.get("len") or 30), gaps)
-            if fit:
-                fixed.append(dict(m, start=fit[0], len=fit[1]))
-            else:
-                lost += 1
-        total = round(sum(b - a for a, b in gaps), 1)
-        JOBS[job_id].setdefault("_pre_warn", []).append(
-            f"El directo tuvo {len(gaps)} hueco(s) sin imagen ({total} s en total, suele ser el directo o la conexion). "
-            f"Se recortaron los clips para evitarlos" + (f" y se saltaron {lost}." if lost else "."))
-        moments = fixed
-        if not moments:
-            JOBS[job_id].update(state="done", msg="Todos los momentos caian en un hueco de video", pct=100)
-            return
-    par = JOBS[job_id].get("_live_parent")
-    if par and not JOBS[job_id].get("_direct"):
-        # directo: solo momentos fuertes y que no repitan lo ya cortado en rondas anteriores
-        off = float(JOBS[job_id].get("_abs_offset", 0))
-        pj = JOBS.get(par, {})
-        used = pj.setdefault("_used", [])
-        keep = []
-        for m in sorted(moments, key=lambda m: m.get("points", 0), reverse=True):
-            if m.get("points", 0) < LIVE_MIN_POINTS:
-                continue
-            a_, b_ = off + float(m["start"]), off + float(m["start"]) + float(m.get("len") or 30)
-            dup = any(min(b_, y) - max(a_, x) > 0.3 * (b_ - a_) for x, y in used)
-            if not dup:
-                keep.append(m)
-                used.append((a_, b_))
-        moments = keep
-        if not moments:
-            JOBS[job_id].update(state="done", msg="Sin momentos fuertes en este tramo", pct=100)
-            return
-    cfg = dict(load_settings())
-    cfg["autosave"] = True      # si hay carpeta de salida, se guardan ahi; si no, quedan para descargar
-    cfg["yt_upload"] = bool(cfg.get("yt_auto")) and yt_connected()
-    o = clean_opts(cfg)
-    segs = [{"start": round(float(m["start"]), 1), "len": round(float(m.get("len") or 30), 1),
-             "points": int(m.get("points") or 0)} for m in moments[:40]]
-    JOBS[job_id].update(state="rendering", msg="Cortando clips solos...", pct=0)
-    threading.Thread(target=render_job, args=(job_id, video, segs, o), daemon=True).start()
+    return out
 
 
 def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart=None, snap=True):
@@ -1856,16 +1273,9 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             if smart and smart.get("live_clips"):
                 job["_live_opts"] = {"want": want, "length": length,
                                      "smart": {k: v for k, v in smart.items()
-                                               if k not in ("live_clips", "clip_every")},
-                                     "clip_every": int(smart.get("clip_every") or 15 * 60),
-                                     "snap": snap, "auto_render": True}
+                                               if k != "live_clips"},
+                                     "snap": snap}
             video = download_video(job_id, url, jdir, rng)
-            if job.get("_live_opts"):   # los clips ya salieron por tramos; no se re-analiza todo
-                time.sleep(3)           # deja arrancar la ronda final
-                n = len(job.get("children", []))
-                job.update(state="done", pct=100, msg=f"Directo terminado: {n} tramo(s) analizados. "
-                           "Los clips estan en cada lote.")
-                return
         job.update(state="analyzing", msg="Extrayendo el audio...", pct=12)
         duration = probe_duration(video)
         energy = []
@@ -1934,8 +1344,6 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=moments)
-        if job.get("_auto_render") and moments:
-            auto_render(job_id, video, moments)
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
@@ -1945,30 +1353,12 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="error", msg=str(e)[-300:] or "No se pudo analizar el video.")
 
 
-def save_extras(clip, dest, length, ai):
-    """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
-    try:
-        subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.5, length * 0.35):.2f}",
-                        "-i", str(clip), "-frames:v", "1", "-q:v", "3", str(Path(dest).with_suffix(".jpg"))],
-                       stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
-    except Exception:  # noqa: BLE001
-        pass
-    ai = ai or {}
-    if ai.get("title") or ai.get("desc") or ai.get("tags"):
-        try:
-            txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", []))) if x)
-            Path(dest).with_suffix(".txt").write_text(txt + "\n", encoding="utf-8")
-        except OSError:
-            pass
-
-
 def render_job(job_id, video, segments, o):
     job, jdir = JOBS[job_id], WORK / job_id
     state = rt(job_id)
     try:
         job.update(state="rendering", msg="Preparando...", pct=0, clips=[], saved=[], warnings=[],
                    ready_clips=[])
-        job["warnings"].extend(job.pop("_pre_warn", []))
         font = find_font()
         if (o["texts"] or o["subs"]) and not font:
             job["warnings"].append("No se encontro una fuente para los textos; salieron sin texto.")
@@ -2125,8 +1515,6 @@ def render_job(job_id, video, segments, o):
                     saved = str(dest)
                 except OSError:
                     warn(f"No se pudo guardar el clip {i} en la carpeta.")
-                else:
-                    save_extras(out, dest, out_len, ai)
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
@@ -2172,9 +1560,6 @@ def render_job(job_id, video, segments, o):
                         for r in results if r]
         job["saved"] = [r["saved"] for r in results if r and r["saved"]]
         job.update(state="done", msg="Listo", pct=100)
-        if o.get("yt_upload") and job["clips"]:
-            threading.Thread(target=yt_upload_clips, args=(job_id, list(job["clips"]), o["yt_privacy"]),
-                             daemon=True).start()
     except Cancelled:
         job.update(state="cancelled", msg="Cancelado")
     except Exception as e:  # noqa: BLE001
@@ -2251,45 +1636,19 @@ def check_update():
 
 
 def install_update():
-    """Empieza a bajar el instalador nuevo en segundo plano. Devuelve True si arranco."""
+    """Baja el instalador nuevo, lo abre y cierra Clipper para poder reemplazarlo."""
     url = UPDATE.get("url", "")
-    if not IS_WIN or not url.startswith(UPDATE_PREFIX):
+    if not IS_WIN or not url.startswith("https://github.com/Y4ll/Clipper/"):
         return False
-    if UPDATE["dl"] in ("downloading", "launching"):
-        return True
-    UPDATE.update(dl="downloading", pct=0, msg="Conectando...")
-    threading.Thread(target=_download_update, args=(url,), daemon=True).start()
-    return True
-
-
-def _download_update(url):
     dest = Path(tempfile.gettempdir()) / "ClipperSetup.exe"
-    part = dest.with_suffix(".part")
-    try:
-        with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
-            total = int(r.headers.get("Content-Length") or 0)
-            got, last = 0, time.time()
-            while True:
-                chunk = r.read(256 * 1024)
-                if not chunk:
-                    break
-                f.write(chunk)
-                got += len(chunk)
-                if total and time.time() - last > 0.3:
-                    last = time.time()
-                    UPDATE.update(pct=int(got * 100 / total),
-                                  msg=f"{got // 1048576} de {total // 1048576} MB")
-        if part.stat().st_size < 1000000 or part.read_bytes()[:2] != b"MZ":
-            raise RuntimeError("El archivo bajado no es un instalador valido.")
-        part.replace(dest)
-    except Exception as e:  # noqa: BLE001
-        part.unlink(missing_ok=True)
-        UPDATE.update(dl="error", msg=str(e)[:150] or "No se pudo bajar la actualizacion.")
-        return
-    UPDATE.update(dl="launching", pct=100, msg="Abriendo el instalador...")
+    with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+        shutil.copyfileobj(r, f)
+    if dest.stat().st_size < 1000000 or dest.read_bytes()[:2] != b"MZ":
+        return False
     subprocess.Popen([str(dest)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                      stderr=subprocess.DEVNULL)
     threading.Timer(1.5, lambda: os._exit(0)).start()
+    return True
 
 
 # ---------------------------------------------------------------------- web
@@ -2425,13 +1784,16 @@ class Handler(BaseHTTPRequestHandler):
                         "font": find_font() is not None, "lan": LAN_MODE,
                         "gemini": bool(get_gemini_key())})
         elif u.path == "/streamers":
-            self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
-        elif u.path == "/youtube":
-            cfg, st = yt_load(), load_settings()
-            self._json({"configured": bool(cfg.get("client_id") and cfg.get("client_secret")),
-                        "connected": bool(cfg.get("refresh_token")), "auth": dict(YT_AUTH),
-                        "auto": bool(st.get("yt_auto")), "privacy": st.get("yt_privacy") or "private",
-                        "max_per_day": YT_MAX_PER_DAY})
+            # GET: lista con estado en vivo
+            rows = []
+            for entry in load_streamers():
+                url = entry.get("url", "")
+                st = MONITOR.get(url, {})
+                rows.append({"url": url, "name": st.get("name") or entry.get("name") or url,
+                             "enabled": entry.get("enabled", True),
+                             "live": bool(st.get("live")),
+                             "job_id": st.get("job_id") or ""})
+            self._json(rows)
         elif u.path == "/settings":
             self._json(load_settings())
         elif u.path == "/assets":
@@ -2489,12 +1851,10 @@ class Handler(BaseHTTPRequestHandler):
             rng = (a, b if b > a else None, last)
             qy = str(body.get("query") or "").strip()[:80]
             live_clips = bool(body.get("live_clips"))
-            clip_every = clean_num(body.get("clip_every_min"), 1, 60, 15)
-            clip_every = clip_every if clip_every in (3, 15, 30) else 15
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
                      "query": qy,
                      "ai_rank": bool(body.get("ai_rank")),
-                     "live_clips": live_clips, "clip_every": clip_every * 60} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
+                     "live_clips": live_clips} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
             if live_clips and not smart:
                 smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
             snap = body.get("snap") is not False
@@ -2502,59 +1862,6 @@ class Handler(BaseHTTPRequestHandler):
                              args=(job_id, None, url, want, length, rng, smart, snap),
                              daemon=True).start()
             self._json({"id": job_id})
-        elif u.path == "/youtube/config":
-            body = self._body_json() or {}
-            cid, sec = str(body.get("client_id") or "").strip(), str(body.get("client_secret") or "").strip()
-            if not re.fullmatch(r"[\w.\-]{10,200}", cid) or not re.fullmatch(r"[\w.\-]{10,200}", sec):
-                self._json({"error": "El ID de cliente o el secreto no tienen el formato de Google."}, 400)
-                return
-            cfg = yt_load()
-            if cfg.get("client_id") != cid:
-                cfg.pop("refresh_token", None)
-            cfg.update(client_id=cid, client_secret=sec)
-            yt_save(cfg)
-            self._json({"ok": True})
-        elif u.path == "/youtube/connect":
-            try:
-                self._json({"url": yt_connect_start()})
-            except ValueError as e:
-                self._json({"error": str(e)}, 400)
-        elif u.path == "/youtube/disconnect":
-            YT_FILE.unlink(missing_ok=True)
-            YT_TOKEN.update(value="", exp=0.0)
-            YT_AUTH.update(status="idle", msg="")
-            self._json({"ok": True})
-        elif u.path in ("/streamers/add", "/streamers/toggle", "/streamers/delete"):
-            body = self._body_json() or {}
-            items = load_streamers()
-            if u.path == "/streamers/add":
-                url = normalize_streamer_url(body.get("url"))
-                if not url:
-                    self._json({"error": "Pon un link (https://kick.com/usuario) o solo el usuario."}, 400)
-                    return
-                if any(x["url"].lower() == url.lower() for x in items):
-                    self._json({"error": "Ese canal ya esta en la lista."}, 400)
-                    return
-                if len(items) >= 50:
-                    self._json({"error": "Maximo 50 canales."}, 400)
-                    return
-                name = str(body.get("name") or "").strip()[:60] or url.rstrip("/").split("/")[-1]
-                items.append({"url": url, "name": name, "enabled": True})
-            else:
-                url = str(body.get("url") or "")
-                if u.path == "/streamers/delete":
-                    items = [x for x in items if x["url"] != url]
-                else:
-                    for x in items:
-                        if x["url"] == url:
-                            x["enabled"] = bool(body.get("enabled"))
-            try:
-                save_streamers(items)
-            except OSError:
-                self._json({"error": "No pude guardar la lista."}, 500)
-                return
-            MONITOR_WAKE.set()
-            self._json({"ok": True})
         elif u.path == "/render":
             self._render()
         elif u.path == "/cancel":
@@ -2571,31 +1878,8 @@ class Handler(BaseHTTPRequestHandler):
                 if jid in JOBS and JOBS[jid]["state"] in ("ready", "queued"):
                     JOBS[jid].update(state="cancelled", msg="Cancelado")
             self._json({"ok": True})
-        elif u.path == "/clipnow":
-            jid = q.get("id", [""])[0]
-            pj = JOBS.get(jid)
-            lo = (pj or {}).get("_live_opts")
-            if not pj or not lo or not pj.get("live"):
-                self._json({"error": "Este directo ya no se esta grabando."}, 400)
-                return
-            cur = float(pj.get("_rec_sec", 0) or 0)
-            dur = float(lo["length"])
-            if cur < 8:
-                self._json({"error": "Espera unos segundos: aun no hay video grabado."}, 400)
-                return
-            dur = min(dur, cur - 2)
-            # Usar el archivo de la parte actual (input_N.mp4) y su offset acumulado
-            live_out_path = pj.get("_live_out")
-            out_path = Path(live_out_path) if live_out_path else WORK / jid / "input_1.mp4"
-            part_offset = float(pj.get("_part_offset_snapshot", 0.0))
-            spawn_live_child(jid, out_path, max(0.0, cur - 2 - dur), dur, lo,
-                             direct=True, part_offset=part_offset)
-            self._json({"ok": True})
         elif u.path == "/stoplive":
             jid = q.get("id", [""])[0]
-            pj = JOBS.get(jid)
-            if pj:
-                pj["_stop_requested"] = True   # impide que el bucle abra otra parte
             st = RT.get(jid)
             if st:
                 with st["lock"]:
@@ -2606,6 +1890,36 @@ class Handler(BaseHTTPRequestHandler):
                         pipe.flush()
                 except OSError:
                     pass
+            self._json({"ok": True})
+        elif u.path == "/streamers/add":
+            body = self._body_json(2000)
+            url = str((body or {}).get("url", "")).strip()
+            name = str((body or {}).get("name", "")).strip()[:80]
+            if not re.match(r"^https?://\S+$", url) or len(url) > 500:
+                self._json({"error": "Pega un link valido."}, 400)
+                return
+            lst = load_streamers()
+            if any(e["url"] == url for e in lst):
+                self._json({"ok": True})   # ya existe
+                return
+            lst.append({"url": url, "name": name or url, "enabled": True})
+            save_streamers(lst)
+            self._json({"ok": True})
+        elif u.path == "/streamers/delete":
+            body = self._body_json(600)
+            url = str((body or {}).get("url", "")).strip()
+            lst = [e for e in load_streamers() if e.get("url") != url]
+            save_streamers(lst)
+            MONITOR.pop(url, None)
+            self._json({"ok": True})
+        elif u.path == "/streamers/toggle":
+            body = self._body_json(600)
+            url = str((body or {}).get("url", "")).strip()
+            lst = load_streamers()
+            for e in lst:
+                if e.get("url") == url:
+                    e["enabled"] = not e.get("enabled", True)
+            save_streamers(lst)
             self._json({"ok": True})
         elif u.path == "/apikey":
             body = self._body_json(2000)
@@ -2853,8 +2167,8 @@ def run_native_window(url):
                         "developer.microsoft.com/microsoft-edge/webview2/consumer")
                 return False
         api = Api()
-        win = webview.create_window("Clipper | Shadow Mode", url, js_api=api, width=1280,
-                                    height=800, min_size=(420, 600), background_color="#08090c")
+        win = webview.create_window("Clipper | Shadow Mode", url, js_api=api, width=980,
+                                    height=1000, min_size=(420, 600), background_color="#08090c")
         api._window = win
         try:
             webview.settings["ALLOW_DOWNLOADS"] = True
@@ -2896,7 +2210,7 @@ def open_app_window(url):
         try:
             subprocess.Popen(
                 [exe, "--app=" + url, "--user-data-dir=" + str(WORK / "perfil"),
-                 "--window-size=1280,800", "--no-first-run", "--no-default-browser-check"],
+                 "--window-size=980,1000", "--no-first-run", "--no-default-browser-check"],
                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except OSError:
