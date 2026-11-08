@@ -763,10 +763,61 @@ def set_gemini_key(key):
     return True
 
 
+_GROQ_MODELS = {}
+
+
+def groq_chat_models(key):
+    """Modelos de chat de Groq que esta clave puede usar (se pregunta y se cachea)."""
+    hit = _GROQ_MODELS.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    pref = ("llama-3.3-70b-versatile", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "llama-3.1-8b-instant")
+    order = list(pref)
+    try:
+        req = urllib.request.Request(f"{GROQ_BASE}/models", headers={
+            "Authorization": f"Bearer {key}", "User-Agent": "Clipper"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ids = [m["id"] for m in json.load(r).get("data", [])]
+        bad = ("whisper", "guard", "tts", "playai", "prompt", "safeguard", "embed", "compound")
+        extra = [m for m in ids if not any(x in m for x in bad) and m not in pref]
+        order = [m for m in pref if m in ids] + extra or order
+    except Exception:  # noqa: BLE001
+        pass
+    _GROQ_MODELS[key] = (time.time(), order)
+    return order
+
+
+def groq_json(prompt, temperature=0.7):
+    """Pide a un modelo de texto de Groq una respuesta JSON. Devuelve dict o lanza RuntimeError."""
+    key = get_groq_key()
+    if not key:
+        raise RuntimeError("Sin clave de Groq")
+    last = "error"
+    for model in groq_chat_models(key)[:4]:
+        body = json.dumps({"model": model, "temperature": temperature,
+                           "response_format": {"type": "json_object"},
+                           "messages": [{"role": "user", "content": prompt}]}).encode("utf-8")
+        req = urllib.request.Request(f"{GROQ_BASE}/chat/completions", data=body, method="POST", headers={
+            "Authorization": f"Bearer {key}", "User-Agent": "Clipper", "Content-Type": "application/json"})
+        try:
+            with urllib.request.urlopen(req, timeout=30) as r:
+                return json.loads(json.load(r)["choices"][0]["message"]["content"])
+        except urllib.error.HTTPError as e:
+            last = e.code
+            if e.code in (400, 404, 503):
+                continue
+            break
+        except Exception as e:  # noqa: BLE001
+            last = type(e).__name__
+            break
+    raise RuntimeError(f"Groq no respondio ({last})")
+
+
 def gemini_title(text, lang, tone="directo"):
-    """Pide a Gemini un titulo gancho y hashtags. Solo se envia el texto del clip, nunca el video."""
+    """Titulo gancho, descripcion y hashtags con IA (Gemini y, si falla o no hay clave, Groq).
+    Solo se envia el texto del clip, nunca el video."""
     key = get_gemini_key()
-    if not key or len(text.strip()) < 15:
+    if (not key and not get_groq_key()) or len(text.strip()) < 15:
         return None
     idioma = {"en": "ingles", "es": "espanol"}.get(lang, "el mismo idioma del texto")
     tono = {"directo": "directo y llamativo", "gracioso": "gracioso y con humor",
@@ -777,31 +828,36 @@ def gemini_title(text, lang, tone="directo"):
               "sin comillas ni emojis; una descripcion corta para publicar (maximo 140 caracteres) y "
               "3 hashtags relevantes. Responde solo JSON: "
               '{"title": "...", "desc": "...", "tags": ["#a", "#b", "#c"]}\n\nTexto del clip:\n' + text[:3000])
-    body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
-                       "generationConfig": {"responseMimeType": "application/json",
-                                            "temperature": 0.7}}).encode("utf-8")
+
+    def parse(out):
+        title = re.sub(r"[\r\n]+", " ", str(out.get("title", ""))).strip().upper()[:60]
+        tags = [str(t).strip() for t in (out.get("tags") or []) if str(t).strip().startswith("#")][:4]
+        desc = re.sub(r"\s+", " ", str(out.get("desc", ""))).strip()[:160]
+        return {"title": title, "tags": tags, "desc": desc} if title else None
+
     last_err = None
-    for model in gemini_models(key):
-        req = urllib.request.Request(
-            f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
-            headers={"Content-Type": "application/json", "x-goog-api-key": key})
-        try:
-            with urllib.request.urlopen(req, timeout=25) as r:
-                data = json.load(r)
-            raw = data["candidates"][0]["content"]["parts"][0]["text"]
-            out = json.loads(raw)
-            title = re.sub(r"[\r\n]+", " ", str(out.get("title", ""))).strip().upper()[:60]
-            tags = [str(t).strip() for t in (out.get("tags") or []) if str(t).strip().startswith("#")][:4]
-            desc = re.sub(r"\s+", " ", str(out.get("desc", ""))).strip()[:160]
-            return {"title": title, "tags": tags, "desc": desc} if title else None
-        except urllib.error.HTTPError as e:
-            last_err = e
-            if e.code in (404, 400):
-                continue          # modelo no disponible: prueba el siguiente
-            break
-        except Exception as e:  # noqa: BLE001
-            last_err = e
-            break
+    if key:
+        body = json.dumps({"contents": [{"parts": [{"text": prompt}]}],
+                           "generationConfig": {"responseMimeType": "application/json",
+                                                "temperature": 0.7}}).encode("utf-8")
+        for model in gemini_models(key):
+            req = urllib.request.Request(
+                f"{GEMINI_BASE}/models/{model}:generateContent", data=body, method="POST",
+                headers={"Content-Type": "application/json", "x-goog-api-key": key})
+            try:
+                with urllib.request.urlopen(req, timeout=25) as r:
+                    data = json.load(r)
+                return parse(json.loads(data["candidates"][0]["content"]["parts"][0]["text"]))
+            except urllib.error.HTTPError as e:
+                last_err = e
+                if e.code in (404, 400, 503):
+                    continue          # modelo no disponible o saturado: prueba el siguiente
+                break
+            except Exception as e:  # noqa: BLE001
+                last_err = e
+                break
+    if get_groq_key():   # sin Gemini, o Gemini fallo: respaldo con Groq
+        return parse(groq_json(prompt))
     raise RuntimeError(f"Gemini no respondio ({getattr(last_err, 'code', 'error')})")
 
 
@@ -2302,7 +2358,7 @@ def render_job(job_id, video, segments, o):
 
             cues = []
             heard = []
-            if (o["subs"] or (o["ai_title"] and get_gemini_key())) and font:
+            if (o["subs"] or (o["ai_title"] and (get_gemini_key() or get_groq_key()))) and font:
                 try:
                     got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i,
                                      o["sub_translate"])

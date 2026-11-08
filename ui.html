@@ -622,7 +622,7 @@ async function loadCaps(){
   $("#pEnc").textContent=enc?("Tarjeta de video · "+({h264_nvenc:"NVIDIA",h264_qsv:"Intel",h264_amf:"AMD"}[enc]||enc)):(CAPS.encoder_ready?"Procesador":"Revisando…");
   $("#pEnc").classList.toggle("on",!!enc);
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
-  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini;$("#ai_listen").disabled=!(CAPS.gemini||CAPS.groq);$("#qdel").classList.toggle("hidden",!CAPS.groq);
+  $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!(CAPS.gemini||CAPS.groq);$("#ai_listen").disabled=!(CAPS.gemini||CAPS.groq);$("#qdel").classList.toggle("hidden",!CAPS.groq);
   $("#aiRankRow").style.display=CAPS.gemini?"":"none";$("#ai_rank").disabled=!CAPS.gemini;
   document.querySelector('#pick [data-m=voz]').disabled=!CAPS.whisper;$("#pcIa").disabled=!(CAPS.gemini&&CAPS.whisper);
   if(!CAPS.whisper)document.querySelector('#pick [data-m=voz] span').textContent="No disponible: esta instalación no trae el modelo de voz.";
