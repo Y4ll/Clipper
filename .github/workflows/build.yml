@@ -42,6 +42,12 @@ jobs:
           Copy-Item dist\Clipper.exe pack\
           Copy-Item $ff.FullName pack\
           New-Item -ItemType Directory -Path pack\whisper -Force | Out-Null
+          function Get-Retry($uri, $out) {
+            for ($i = 1; $i -le 4; $i++) {
+              try { Invoke-WebRequest -Uri $uri -OutFile $out -TimeoutSec 600; return } catch { Write-Host "intento $i fallo: $_"; Start-Sleep -Seconds (5 * $i) }
+            }
+            throw "no se pudo descargar $uri"
+          }
           try {
             $rels = gh api "repos/ggml-org/whisper.cpp/releases?per_page=8" | ConvertFrom-Json
             $asset = $null
@@ -52,18 +58,21 @@ jobs:
               }
             }
             if (-not $asset) { throw "no hay whisper-bin-x64.zip" }
-            Invoke-WebRequest -Uri $asset.browser_download_url -OutFile whisper.zip
+            Get-Retry $asset.browser_download_url whisper.zip
             Expand-Archive whisper.zip -DestinationPath whisper_tmp
             $cli = Get-ChildItem -Path whisper_tmp -Recurse -Filter whisper-cli.exe | Select-Object -First 1
             if (-not $cli) { throw "no hay whisper-cli.exe" }
             Copy-Item "$($cli.DirectoryName)\*" pack\whisper\ -Recurse
-            Invoke-WebRequest -Uri "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin" -OutFile pack\whisper\ggml-base-q5_1.bin
+            Get-Retry "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin" "pack\whisper\ggml-base-q5_1.bin"
             if ((Get-Item pack\whisper\ggml-base-q5_1.bin).Length -lt 10000000) { throw "modelo incompleto" }
           } catch {
-            Write-Host "AVISO: subtitulos no incluidos: $_"
+            Write-Host "ERROR whisper: $_"
             Remove-Item pack\whisper\* -Recurse -Force -ErrorAction SilentlyContinue
           }
           $global:LASTEXITCODE = 0
+          if (-not (Test-Path pack\whisper\whisper-cli.exe) -or -not (Test-Path pack\whisper\ggml-base-q5_1.bin)) {
+            throw "Falta Whisper (whisper-cli.exe o el modelo): el build se detiene para no publicar una version sin subtitulos"
+          }
           Compress-Archive -Path pack\* -DestinationPath Clipper-Windows.zip
 
       - name: Crear instalador (Inno Setup)
