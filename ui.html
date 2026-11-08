@@ -181,8 +181,7 @@ details.card[open]>summary{margin-bottom:14px}
         <button class="btn sm danger hidden" id="btnFillerDel">Quitar</button>
       </div>
     </div>
-    <div class="field" style="margin-top:10px"><label class="tog" style="padding:0 0 6px"><input type="checkbox" id="parts"><span>Dividir en partes (Parte 1, Parte 2…)<small>Cada momento se corta en partes seguidas, con la etiqueta PARTE 1/2 arriba</small></span></label>
-      <div class="chips" id="partsN"><button class="chip" data-n="2">2 partes</button><button class="chip" data-n="3">3 partes</button><button class="chip" data-n="4">4 partes</button></div>
+    <div class="field" style="margin-top:10px"><label class="tog" style="padding:0 0 6px"><input type="checkbox" id="parts"><span>Dividir en partes (Parte 1, Parte 2…)<small>Cada momento se corta en partes iguales según su duración — se calcula automáticamente</small></span></label>
       <div class="note" id="partsNote"></div></div>
     <div class="grid" style="margin-top:8px">
       <label class="tog"><input type="checkbox" id="zoom"><span>Zoom lento<small>Acerca poco a poco</small></span></label>
@@ -272,7 +271,7 @@ $("#build").textContent=BUILD;
 
 /* ---------- ajustes ---------- */
 let QUERY="";
-const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:0,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_auto:true,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
 const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
@@ -297,9 +296,7 @@ function paint(){
    r.style.top=(S.cam_corner==="tl"||S.cam_corner==="tr")?"0":"auto";r.style.bottom=(S.cam_corner==="bl"||S.cam_corner==="br")?"0":"auto"}
   $("#subLangBox").classList.toggle("hidden",!S.subs);
   $("#subStyleBox").classList.toggle("hidden",!S.subs);$("#trBox").classList.toggle("hidden",!S.subs);
-  document.querySelectorAll("#partsN .chip").forEach(b=>b.classList.toggle("on",+b.dataset.n===S.parts_n));
-  $("#partsN").classList.toggle("hidden",!S.parts);
-  $("#partsNote").textContent=S.parts?`Cada momento dura ${S.len*S.parts_n} s y sale en ${S.parts_n} partes de ${S.len} s.`:"";
+  $("#partsNote").textContent=S.parts?`Las partes se calculan automáticamente según la duración de cada momento.`:"";
   $("#music_vol").value=S.music_vol;$("#mvv").textContent=S.music_vol;
   $("#outDirTxt").textContent=S.out_dir?S.out_dir:"Sin carpeta elegida";
 }
@@ -308,7 +305,7 @@ chips("mode","mode");chips("text_pos","text_pos");chips("text_color","text_color
 chips("sub_lang","sub_lang");chips("logo_pos","logo_pos");chips("fps","fps");chips("quality","quality");chips("sub_style","sub_style");chips("ai_tone","ai_tone");chips("res","res");chips("cam_corner","cam_corner");
 $("#cam_size").oninput=e=>{S.cam_size=+e.target.value;paint();persist()};
 $("#music_vol").oninput=e=>{S.music_vol=+e.target.value;paint();persist()};
-document.querySelectorAll("#partsN .chip").forEach(b=>b.onclick=()=>{S.parts_n=+b.dataset.n;paint();persist()});
+
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
 for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
@@ -328,7 +325,7 @@ function renderTexts(){
 }
 $("#addText").onclick=()=>{const last=S.texts.length?S.texts[S.texts.length-1].end:0;S.texts.push({text:"",start:last,end:last+3});renderTexts();persist()};
 
-const analysisLen=()=>S.parts?Math.min(600,S.len*S.parts_n):S.len;
+const analysisLen=()=>S.len;
 const PRE={
   kick:{mode:"cam",len:30,zoom:true,shake:false,punch:true,zoom_auto:true,enhance:true,subs:true,smart:true,snap:true,preset:"custom"},
   cam:{mode:"crop",len:30,zoom:true,shake:false,punch:true,subs:true,smart:false,snap:true,preset:"custom"},
