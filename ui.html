@@ -92,6 +92,12 @@ input[type=range]{accent-color:var(--yellow);width:100%}
 .btn.danger{color:var(--red);border-color:#5a2a2a}
 .btn.sm{padding:6px 10px;font-size:13px;border-radius:8px}
 .btn[disabled]{opacity:.4;cursor:not-allowed}
+.pick{margin:10px 0 4px}.pickh{font-weight:800;margin-bottom:6px}
+.pickrow{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px}
+.pc{text-align:left;border:1px solid var(--line);background:#090a0d;border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:4px}
+.pc b{font-size:14px}.pc span{font-size:12px;color:var(--muted)}
+.pc:hover{border-color:var(--liney)}.pc.on{border-color:var(--yellow);box-shadow:var(--glow)}.pc.on b{color:var(--yellow)}
+.pc[disabled]{opacity:.4;cursor:not-allowed}
 .chips{display:flex;gap:6px;flex-wrap:wrap}
 .chip{border:1px solid var(--line);background:#090a0d;border-radius:8px;padding:7px 11px;font-size:13px}
 .chip:hover{border-color:var(--liney)}
@@ -338,6 +344,14 @@ input[type=range]{accent-color:var(--yellow);width:100%}
         </div>
       </div>
     </div>
+    <div class="pick" id="pick">
+      <div class="pickh">Cómo elegir los clips</div>
+      <div class="pickrow">
+        <button type="button" class="pc" data-m="sin"><b>Sin IA</b><span>Encuentra los picos de volumen, gritos y risas. Rápido y siempre funciona.</span></button>
+        <button type="button" class="pc" data-m="voz"><b>Con voz</b><span>Escucha lo que se dice (Whisper, en tu PC) y elige mejor. Tarda más y es gratis.</span></button>
+        <button type="button" class="pc" data-m="ia" id="pcIa"><b>Con IA</b><span id="pcIaNote">Gemini reordena los mejores momentos y pone título. Pide tu clave en Ajustes.</span></button>
+      </div>
+    </div>
     <details class="more"><summary>Más opciones del video</summary>
       <div><label class="lbl" for="query">Buscar un momento (opcional)</label>
         <input type="text" id="query" maxlength="80" placeholder="Ej: cuando habla del tráiler, la pelea, el gol…" autocomplete="off">
@@ -526,6 +540,7 @@ let QUERY="";
 const S={n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
+document.querySelectorAll("#pick .pc").forEach(b=>b.onclick=()=>{if(b.disabled)return;const m=b.dataset.m;S.smart=m!=="sin";S.ai_rank=m==="ia";paint();persist()});
 const persist=()=>{clearTimeout(saveT);saveT=setTimeout(()=>post("/settings",S).catch(()=>{}),400)};
 const PRESETS={tiktok:30,reels:30,shorts:45};
 
@@ -541,6 +556,7 @@ function paint(){
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts"])$("#"+k).checked=!!S[k];
+  {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
   $("#cam_size").value=S.cam_size;$("#csv").textContent=S.cam_size;
@@ -604,6 +620,9 @@ async function loadCaps(){
   if(CAPS.encoder_ready&&!enc){$("#gpuNote").textContent="No se encontró tarjeta compatible: usará el procesador"}
   $("#gdel").classList.toggle("hidden",!CAPS.gemini);$("#ai_title").disabled=!CAPS.gemini||!CAPS.whisper;
   $("#aiRankRow").style.display=CAPS.gemini?"":"none";$("#ai_rank").disabled=!CAPS.gemini;
+  document.querySelector('#pick [data-m=voz]').disabled=!CAPS.whisper;$("#pcIa").disabled=!(CAPS.gemini&&CAPS.whisper);
+  if(!CAPS.whisper)document.querySelector('#pick [data-m=voz] span').textContent="No disponible: esta instalación no trae el modelo de voz.";
+  if(CAPS.gemini)$("#pcIaNote").textContent="Gemini reordena los mejores momentos y pone título. Solo envía texto, nunca el video.";
   if(CAPS.gemini)$("#gkey").placeholder="Clave guardada ✓";
   if(!CAPS.ytdlp){$("#rangeBox").classList.add("hidden");$("#url").disabled=true;$("#btnUrl").disabled=true;$("#url").placeholder="Descarga por link no disponible en esta versión"}
   if(!CAPS.encoder_ready)setTimeout(loadCaps,2000);
