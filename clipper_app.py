@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -753,6 +753,40 @@ def drop_fillers(words, length, keep=None):
     return out
 
 
+BADWORDS = {"mierda", "puta", "puto", "putas", "joder", "coño", "cono", "carajo", "cabron", "cabrón", "pendejo",
+            "pendeja", "verga", "culo", "marica", "maricon", "fuck", "fucking", "shit", "bitch", "asshole", "dick"}
+
+
+def _wkey(w):
+    return norm_text(w).strip(" .,;:!?¿¡\"'()")
+
+
+def parse_vocab(text):
+    out = {}
+    for line in str(text or "").splitlines():
+        if "=" in line:
+            a, b = line.split("=", 1)
+            a, b = _wkey(a), b.strip()
+            if a and b:
+                out[a] = b
+    return out
+
+
+def fix_words(words, o):
+    """Vocabulario propio (mal=bien) y censura de groserias. Devuelve palabras nuevas y tramos a silenciar."""
+    vocab = parse_vocab(o.get("vocab"))
+    mutes, out = [], []
+    for a, b, w in words:
+        k = _wkey(w)
+        if k in vocab:
+            w = vocab[k]
+        elif o.get("censor") and k in BADWORDS:
+            w = "*" * max(3, len(k))
+            mutes.append((round(a, 2), round(b, 2)))
+        out.append((a, b, w))
+    return out, mutes[:30]
+
+
 def remap_time(t, keep):
     off = 0.0
     for x, e in keep:
@@ -802,6 +836,8 @@ def build_audio(o, keep, has_audio, music_idx):
         chain = []
         if keep:
             chain += [f"aselect='{keep_expr(keep)}'", "asetpts=N/SR/TB"]
+        for a, b in (o.get("mutes") or [])[:30]:   # groserias: silencio donde se dicen
+            chain.append(f"volume=enable='between(t,{max(0.0, a - 0.05):.2f},{b + 0.05:.2f})':volume=0")
         if o["enhance"]:
             chain += ["highpass=f=80", "afftdn=nf=-25", "loudnorm=I=-14:TP=-1.5:LRA=11"]
         if chain:
@@ -1729,6 +1765,7 @@ def clean_opts(raw, seg_len=120):
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "parts_full": bool(raw.get("parts") and raw.get("parts_full")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
+        "vocab": str(raw.get("vocab") or "")[:1500], "censor": bool(raw.get("censor")),
         "fade_io": bool(raw.get("fade_io")), "no_filler": bool(raw.get("no_filler")),
         "cta_on": bool(raw.get("cta_on")), "cta_text": str(raw.get("cta_text") or "")[:40].strip(),
         "handle_text": str(raw.get("handle_text") or "")[:30].strip(),
@@ -2536,7 +2573,7 @@ def render_job(job_id, video, segments, o):
 
             cues = []
             heard = []
-            if (o["subs"] or (o["ai_title"] and (get_gemini_key() or get_groq_key()))) and font:
+            if (o["subs"] or o.get("censor") or (o["ai_title"] and (get_gemini_key() or get_groq_key()))) and font:
                 try:
                     got = None if o["sub_translate"] else heard_cues(job_id, start, length, o["sub_lang"])
                     if got is None:
@@ -2562,6 +2599,12 @@ def render_job(job_id, video, segments, o):
                 cues = [(remap_time(a, keep), remap_time(b, keep), w) for a, b, w in cues]
                 cues = [c for c in cues if c[1] > c[0] + 0.05]
                 peaks = [round(remap_time(t, keep), 2) for t in peaks]
+            mutes = []
+            if heard and (o.get("vocab") or o.get("censor")):
+                cues, _m = fix_words(cues, o)
+                heard, mutes = fix_words(heard, o)
+                if keep:
+                    mutes = [(remap_time(a, keep), remap_time(b, keep)) for a, b in mutes]
             ai = None
             if o["ai_title"] and heard:
                 try:
@@ -2569,6 +2612,7 @@ def render_job(job_id, video, segments, o):
                 except Exception as e:  # noqa: BLE001
                     warn(str(e)[:120])
             oc = dict(o)
+            oc["mutes"] = mutes
             if seg.get("part"):
                 oc["part_label"] = f"PARTE {seg['part'][0]}/{seg['part'][1]}"
                 (jdir / f"{pre}part.txt").write_text(oc["part_label"], encoding="utf-8")
