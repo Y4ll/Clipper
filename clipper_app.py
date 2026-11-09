@@ -1386,7 +1386,8 @@ def speech_score(cues, length):
     words = len(low.split())
     hits = sum(1 for w in HYPE_WORDS if w in low)
     dens = min(1.0, words / max(1.0, length) / 2.5)
-    return min(1.0, 0.6 * dens + min(0.4, 0.15 * hits)), text[:90]
+    laughs = len(re.findall(r"\b(?:ja){2,}|\b(?:je){2,}|\b(?:ha){2,}|\bjaj|risas|laugh", low))   # risas que Whisper escribe
+    return min(1.0, 0.6 * dens + min(0.4, 0.15 * hits) + min(0.3, 0.1 * laughs)), text[:90]
 
 
 def norm_text(t):
