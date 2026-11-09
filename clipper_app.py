@@ -24,6 +24,7 @@ import array
 import base64
 import hashlib
 import importlib.util
+import datetime
 import json
 import math
 import os
@@ -140,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips",
@@ -424,11 +425,41 @@ def yt_connect_start():
     return url
 
 
-def yt_upload_file(path, title, desc, tags, privacy):
+SCHED_LOCK = threading.Lock()
+SCHED_LAST = {}   # plataforma -> ultima hora (epoch) ya asignada: cada clip nuevo va despues de la anterior
+
+
+def next_publish_slot(platform="yt"):
+    """Hora (datetime UTC) en la que debe publicarse el siguiente clip, o None si no se programa.
+    El primer clip sale a la hora elegida y cada uno siguiente 'schedule_gap' minutos despues
+    (varios clips a la misma hora competirian entre si). Si la hora ya paso, empieza dentro de 15 min."""
+    cfg = load_settings()
+    if not cfg.get("schedule_on"):
+        return None
+    try:
+        base = datetime.datetime.fromisoformat(str(cfg.get("schedule_at") or "")).astimezone()   # hora local del PC
+    except ValueError:
+        return None
+    try:
+        gap = max(5, min(1440, int(cfg.get("schedule_gap") or 60))) * 60
+    except (TypeError, ValueError):
+        gap = 3600
+    with SCHED_LOCK:
+        t = max(base.timestamp(), time.time() + 15 * 60)
+        if SCHED_LAST.get(platform):
+            t = max(t, SCHED_LAST[platform] + gap)
+        SCHED_LAST[platform] = t
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc)
+
+
+def yt_upload_file(path, title, desc, tags, privacy, publish_at=None):
     tok = yt_access_token()
     meta = {"snippet": {"title": title[:100], "description": desc[:4900], "tags": tags[:10],
                         "categoryId": "22"},
             "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
+    if publish_at:   # YouTube exige "private" y publica solo a esa hora
+        meta["status"]["privacyStatus"] = "private"
+        meta["status"]["publishAt"] = publish_at.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     size = Path(path).stat().st_size
     init = urllib.request.Request(
         YT_UPLOAD_URL + "?uploadType=resumable&part=snippet,status",
@@ -470,9 +501,14 @@ def yt_upload_clips(job_id, clips, privacy):
             desc = (str(c.get("desc") or "").strip() + "\n\n#Shorts " +
                     " ".join("#" + t for t in tags[:3])).strip()
             try:
-                vid = yt_upload_file(f, title, desc, tags, privacy)
+                when = next_publish_slot()
+                vid = yt_upload_file(f, title, desc, tags, privacy, when)
                 YT_SENT.append(time.time())
-                job["warnings"].append(f"Subido a YouTube ({privacy}): https://youtu.be/{vid}")
+                if when:
+                    job["warnings"].append("Programado en YouTube para " + when.astimezone().strftime("%d/%m %H:%M")
+                                           + f": https://youtu.be/{vid}")
+                else:
+                    job["warnings"].append(f"Subido a YouTube ({privacy}): https://youtu.be/{vid}")
             except Exception as e:  # noqa: BLE001
                 job["warnings"].append("YouTube: no se pudo subir un clip (" + str(e)[:120] + ")")
 
@@ -508,7 +544,7 @@ def tt_login():
             pass
         browser.close()
 
-def tt_upload_file(path, title):
+def tt_upload_file(path, title, schedule=None):
     """Sube un video a TikTok. Devuelve True si OK, lanza excepción si falla."""
     if not tt_connected():
         raise RuntimeError("No hay sesión de TikTok. Ve a Ajustes → TikTok y pulsa Conectar.")
@@ -517,7 +553,12 @@ def tt_upload_file(path, title):
     except ImportError:
         raise RuntimeError("tiktok-uploader no está instalado. Se instala automáticamente en el próximo inicio.")
     uploader = TikTokUploader(cookies=str(TT_FILE), headless=True)
-    ok = uploader.upload_video(str(path), description=title[:2200], skip_split_window=True)
+    extra = {}
+    if schedule:   # TikTok solo acepta de 20 min a 10 dias; la libreria usa hora local sin zona
+        lo, hi = time.time() + 20 * 60, time.time() + 10 * 86400
+        if lo <= schedule.timestamp() <= hi:
+            extra["schedule"] = schedule.astimezone().replace(tzinfo=None)
+    ok = uploader.upload_video(str(path), description=title[:2200], skip_split_window=True, **extra)
     uploader.close()
     return ok
 
@@ -533,7 +574,7 @@ def tt_upload_clips(job_id, clips):
             continue
         title = c.get("title") or f.stem
         try:
-            tt_upload_file(f, title)
+            tt_upload_file(f, title, next_publish_slot("tt"))
             job.setdefault("tiktok_uploaded", []).append(f.name)
         except Exception as e:
             job.setdefault("warnings", []).append("TikTok: no se pudo subir " + f.name + " (" + str(e)[:100] + ")")
@@ -1650,7 +1691,7 @@ def save_settings(data):
 
 # ---------------------------------------------------------------- plantillas
 TEMPLATES_FILE = DATA_DIR / "templates.json"
-TEMPLATE_SKIP = {"texts", "intro_seen", "out_dir", "yt_auto", "yt_privacy", "fps30"}   # no son de estilo: no se guardan
+TEMPLATE_SKIP = {"schedule_on", "schedule_at", "schedule_gap", "texts", "intro_seen", "out_dir", "yt_auto", "yt_privacy", "fps30"}   # no son de estilo: no se guardan
 MAX_TEMPLATES = 30
 
 
