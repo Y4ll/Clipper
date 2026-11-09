@@ -144,7 +144,7 @@ FONT_CANDIDATES = [
 SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
-                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
+                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -2564,9 +2564,9 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="analyzing", msg="Descargando el video...", pct=2)
             # Si el stream es un directo y se pide clipeo automatico, dejamos las opts en el job
             if smart and smart.get("live_clips"):
-                job["_live_opts"] = {"want": want, "length": length,
+                job["_live_opts"] = {"want": want, "length": int(smart.get("live_len") or length),
                                      "smart": {k: v for k, v in smart.items()
-                                               if k not in ("live_clips", "clip_every")},
+                                               if k not in ("live_clips", "clip_every", "live_len")},
                                      "clip_every": int(smart.get("clip_every") or 15 * 60),
                                      "snap": snap, "auto_render": True}
             video = download_video(job_id, url, jdir, rng)
@@ -3611,10 +3611,13 @@ class Handler(BaseHTTPRequestHandler):
             live_clips = bool(body.get("live_clips"))
             clip_every = clean_num(body.get("clip_every_min"), 1, 60, 15)
             clip_every = clip_every if clip_every in (3, 15, 30) else 15
+            live_len = int(clean_num(body.get("live_len"), 10, 120, 30))
+            live_len = live_len if live_len in (20, 30, 45, 60) else 30   # largo de los clips solo para directos
             smart = {"lang": body.get("lang") if body.get("lang") in ("es", "en", "auto") else "es",
                      "query": qy,
                      "ai_rank": bool(body.get("ai_rank")),
-                     "live_clips": live_clips, "clip_every": clip_every * 60} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
+                     "live_clips": live_clips, "clip_every": clip_every * 60,
+                     "live_len": live_len} if (body.get("smart") or qy or body.get("ai_rank") or live_clips) else None
             if live_clips and not smart:
                 smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True}
             snap = body.get("snap") is not False

@@ -357,7 +357,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <div><label class="lbl" for="query">Buscar un momento (opcional)</label>
         <input type="text" id="query" maxlength="80" placeholder="Ej: cuando habla del tráiler, la pelea, el gol…" autocomplete="off">
         <div class="note" id="queryNote">Escucha los tramos más fuertes y sube los que mencionan esas palabras. Necesita Whisper y tarda más en analizar.</div></div>
-      <label class="row" style="margin-top:8px"><svg class="ic"><use href="#i-rocket"/></svg><span>Sacar clips automáticamente mientras graba<small>Solo en directos. Cada <select id="clip_every_min" style="width:auto;display:inline-block;padding:2px 24px 2px 6px" onclick="event.stopPropagation()"><option value="3">3 min</option><option value="15">15 min</option><option value="30">30 min</option></select> analiza lo nuevo y corta los mejores momentos solos. Usa «Cantidad de clips» y «Duración por clip» para ajustar cuántos saca en cada ronda y cuánto duran. Graba en tramos de 60 min hasta que el directo termine solo. Con «Clip ya» guardas los últimos segundos al instante y con «Parar de grabar» terminas cuando quieras.</small></span><input class="sw" type="checkbox" id="live_clips"></label>
+      <label class="row" style="margin-top:8px"><svg class="ic"><use href="#i-rocket"/></svg><span>Sacar clips automáticamente mientras graba<small>Solo en directos. Clips de <select id="live_clip_len" style="width:auto;display:inline-block;padding:2px 24px 2px 6px" onclick="event.stopPropagation()"><option value="20">20 s</option><option value="30">30 s</option><option value="45">45 s</option><option value="60">Short (60 s)</option></select>. Cada <select id="clip_every_min" style="width:auto;display:inline-block;padding:2px 24px 2px 6px" onclick="event.stopPropagation()"><option value="3">3 min</option><option value="15">15 min</option><option value="30">30 min</option></select> analiza lo nuevo y corta los mejores momentos solos. Usa «Cantidad de clips» para ajustar cuántos saca en cada ronda. Graba en tramos de 60 min hasta que el directo termine solo. Con «Clip ya» guardas los últimos segundos al instante y con «Parar de grabar» terminas cuando quieras.</small></span><input class="sw" type="checkbox" id="live_clips"></label>
       <p class="note" id="urlNote">Para streams largos baja solo un tramo: es mucho más rápido. Si el video dura más de 1 hora y no eliges tramo, usa los últimos 20 minutos. Si pegas un directo sin clips automáticos, graba hasta 10 minutos (o los que pongas) y puedes parar con «Analizar lo grabado ya». Úsalo solo con videos tuyos o con permiso de su dueño. Respeta los derechos de autor y las reglas de cada plataforma.</p>
     </details>
   </section>
@@ -370,7 +370,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
     <details class="more" id="monitorCard"><summary>⚙️ Config de directos</summary>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 14px;margin-top:8px">
         <div class="fld"><label for="mon_clip_every">Clip cada:</label><select id="mon_clip_every"><option value="3">3 min</option><option value="5">5 min</option><option value="10">10 min</option><option value="15">15 min</option><option value="30">30 min</option></select></div>
-        <div class="fld"><label for="mon_clip_len">Duración clip:</label><select id="mon_clip_len"><option value="20">20 s</option><option value="30">30 s (recom.)</option><option value="45">45 s</option><option value="60">60 s</option></select></div>
+        <div class="fld"><label for="mon_clip_len">Duración clip:</label><select id="mon_clip_len"><option value="20">20 s</option><option value="30">30 s (recom.)</option><option value="45">45 s</option><option value="60">Short (60 s)</option></select></div>
         <div class="fld"><label for="mon_max_h">Máx. horas:</label><select id="mon_max_h"><option value="2">2 h</option><option value="4">4 h</option><option value="6">6 h (máx)</option></select></div>
         <div class="fld"><label for="mon_quality">Calidad grab.:</label><select id="mon_quality"><option value="auto">Auto</option><option value="best">Mejor</option><option value="1080">1080p</option><option value="720">720p</option></select></div>
       </div>
@@ -609,7 +609,7 @@ function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
-  $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
+  $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#live_clip_len").value=String([20,30,45,60].includes(S.live_clip_len)?S.live_clip_len:30);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","skip_repeats","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
@@ -733,6 +733,7 @@ $("#ytConnect").onclick=async()=>{
 $("#ytOff").onclick=async()=>{await post("/youtube/disconnect");$("#ytMsg").textContent="";loadYoutube()};
 $("#yt_auto").onchange=e=>{S.yt_auto=e.target.checked;persist()};
 $("#clip_every_min").onchange=e=>{S.clip_every_min=Number(e.target.value)||15;persist()};
+$("#live_clip_len").onchange=e=>{S.live_clip_len=Number(e.target.value)||30;persist()};
 $("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
@@ -898,7 +899,7 @@ $("#btnUrl").onclick=async()=>{
 async function submitLink(url){
   if(!url)return;
   const num=id=>Number($("#"+id).value)||0;
-  const r=await post("/fetch",{url,n:S.n,len:analysisLen(),smart:S.smart,ai_rank:S.ai_rank,live_clips:S.live_clips,clip_every_min:S.clip_every_min,query:QUERY,snap:S.snap,lang:S.sub_lang,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
+  const r=await post("/fetch",{url,n:S.n,len:analysisLen(),smart:S.smart,ai_rank:S.ai_rank,live_clips:S.live_clips,live_len:S.live_clip_len,clip_every_min:S.clip_every_min,query:QUERY,snap:S.snap,lang:S.sub_lang,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
   if(r.error){alert(r.error);return}
   window.__lastJob=r.id;
   $("#url").value="";addJobCard(r.id,"Video del link");
