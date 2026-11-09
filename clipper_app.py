@@ -2483,6 +2483,20 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="error", msg=str(e)[-300:] or "No se pudo analizar el video.")
 
 
+LIBRARY_FILE = DATA_DIR / "biblioteca.jsonl"   # un renglon por clip guardado; lo leen otras apps (Sloth)
+LIBRARY_LOCK = threading.Lock()
+
+
+def library_add(rec):
+    """Anota el clip en la biblioteca local para que otras apps lo encuentren. Nunca rompe el render."""
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        with LIBRARY_LOCK, open(LIBRARY_FILE, "a", encoding="utf-8") as f:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except OSError:
+        pass
+
+
 def save_extras(clip, dest, length, ai, points=0):
     """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
     try:
@@ -2684,6 +2698,13 @@ def render_job(job_id, video, segments, o):
                     warn(f"No se pudo guardar el clip {i} en la carpeta.")
                 else:
                     save_extras(out, dest, out_len, ai, seg.get("points", 0))
+                    library_add({"file": str(dest), "source": job.get("name", ""), "live": bool(job.get("live") or job.get("_live_parent")),
+                                 "start_s": round(float(start) + float(offset) + float(job.get("_abs_offset", 0) or 0), 1), "len_s": round(out_len, 1),
+                                 "points": int(seg.get("points", 0) or 0), "title": (ai or {}).get("title", ""),
+                                 "tags": (ai or {}).get("tags", []), "desc": (ai or {}).get("desc", ""),
+                                 "text": " ".join(w[2] for w in heard)[:1500],
+                                 "part": list(seg["part"]) if seg.get("part") else None,
+                                 "created": time.strftime("%Y-%m-%dT%H:%M:%S")})
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),
