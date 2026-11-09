@@ -1124,6 +1124,82 @@ def detect_encoder():
             continue
     detect_ass()
     ENCODER["ready"] = True
+    try:
+        detect_hw()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+HW = {"ready": False}
+
+
+def _ram_gb():
+    try:
+        if os.name == "nt":
+            import ctypes
+
+            class MS(ctypes.Structure):
+                _fields_ = [("l", ctypes.c_ulong), ("load", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
+                            ("avail", ctypes.c_ulonglong), ("pt", ctypes.c_ulonglong), ("pa", ctypes.c_ulonglong),
+                            ("vt", ctypes.c_ulonglong), ("va", ctypes.c_ulonglong), ("ve", ctypes.c_ulonglong)]
+            m = MS()
+            m.l = ctypes.sizeof(MS)
+            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+            return round(m.total / 2**30, 1)
+        for ln in Path("/proc/meminfo").read_text().splitlines():
+            if ln.startswith("MemTotal"):
+                return round(int(ln.split()[1]) / 2**20, 1)
+    except Exception:  # noqa: BLE001
+        pass
+    return 0.0
+
+
+def _cpu_name():
+    try:
+        if os.name == "nt":
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0") as k:
+                return str(winreg.QueryValueEx(k, "ProcessorNameString")[0]).strip()
+        for ln in Path("/proc/cpuinfo").read_text().splitlines():
+            if ln.startswith("model name"):
+                return ln.split(":", 1)[1].strip()
+    except Exception:  # noqa: BLE001
+        pass
+    return "desconocido"
+
+
+def _gpu_names():
+    try:
+        if os.name == "nt":
+            r = subprocess.run(["powershell", "-NoProfile", "-Command",
+                                "(Get-CimInstance Win32_VideoController).Name"],
+                               capture_output=True, text=True, timeout=20, creationflags=NO_WINDOW,
+                               stdin=subprocess.DEVNULL)
+            return [x.strip() for x in r.stdout.splitlines() if x.strip()]
+    except Exception:  # noqa: BLE001
+        pass
+    return []
+
+
+def detect_hw():
+    """Mira los componentes del PC (nucleos, RAM, tarjeta grafica, disco) y da un consejo."""
+    cores = os.cpu_count() or 1
+    ram = _ram_gb()
+    try:
+        free = round(shutil.disk_usage(WORK if WORK.exists() else DATA_DIR.parent).free / 2**30, 1)
+    except OSError:
+        free = 0.0
+    tips = []
+    if cores <= 2:
+        tips.append("Pocos nucleos: usa calidad rapida, 720p y apaga el zoom para ir mas veloz.")
+    if 0 < ram < 6:
+        tips.append("Poca memoria: no cortes con subtitulos mientras grabas un directo.")
+    if free and free < 10:
+        tips.append("Queda poco disco: libera espacio antes de grabar directos.")
+    if not tips:
+        tips.append("Tu PC esta bien para Clipper.")
+    HW.update(ready=True, cpu=_cpu_name(), cores=cores, ram_gb=ram, gpu=_gpu_names(), free_gb=free,
+              workers=1 if cores <= 2 else (2 if cores < 8 else 3), tips=tips)
 
 
 def video_args(enc, quality="fast"):
@@ -3232,6 +3308,8 @@ class Handler(BaseHTTPRequestHandler):
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
                         "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
+        elif u.path == "/hw":
+            self._json(dict(HW, encoder=ENCODER["name"], encoder_ready=ENCODER["ready"]))
         elif u.path == "/streamers":
             self._json({"streamers": streamers_view(), "every": MONITOR_EVERY})
         elif u.path == "/streamers/config":

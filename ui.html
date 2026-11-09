@@ -510,6 +510,8 @@ input[type=range]{accent-color:var(--yellow);width:100%}
   <section class="panel p-adv" id="p-adv">
     <h2><svg class="ic"><use href="#i-gear"/></svg>7. Ajustes avanzados</h2>
 
+    <div class="lbl" style="color:var(--yellow);margin-bottom:6px">💻 Tu PC</div>
+    <div class="note" id="hwBox" style="margin-bottom:12px">Mirando tu PC…</div>
     <!-- IA -->
     <div class="lbl" style="color:var(--yellow);margin-bottom:6px">🤖 Inteligencia Artificial</div>
     <div class="adv" style="margin-bottom:10px">
@@ -673,6 +675,12 @@ $("#tplDel").onclick=async()=>{const n=$("#tplSel").value;if(!n)return;const r=a
   $("#tplNote").textContent=r.ok?"Plantilla borrada: "+n:(r.error||"No se pudo borrar.");loadTpls()};
 /* ---------- capacidades ---------- */
 let CAPS={};
+async function loadHW(){
+  let d;try{d=await(await API("/hw")).json()}catch(e){return}
+  if(!d.ready){setTimeout(loadHW,3000);return}
+  const enc=d.encoder?"Tarjeta gráfica usada para cortar ("+d.encoder.replace("h264_","")+")":"Se corta con el procesador";
+  $("#hwBox").innerHTML="Procesador: <b>"+esc(d.cpu)+"</b> · "+d.cores+" núcleos<br>Memoria: <b>"+(d.ram_gb||"?")+" GB</b> · Disco libre: <b>"+(d.free_gb||"?")+" GB</b><br>Gráfica: <b>"+esc((d.gpu||[]).join(", ")||"no detectada")+"</b><br>"+enc+" · "+d.workers+" clip(s) a la vez<br><span style=\"color:var(--yellow)\">"+d.tips.map(esc).join("<br>")+"</span>";
+}
 async function loadCaps(){
   try{CAPS=await (await API("/caps")).json()}catch(e){return}
   $("#pSub").textContent=CAPS.whisper?"Subtítulos listos":"Sin subtítulos";$("#pSub").classList.toggle("on",!!CAPS.whisper);
@@ -1013,7 +1021,7 @@ $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.pre
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s);if(!s.fps30){S.fps=30;S.fps30=true;persist()}}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadHW();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
   if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
