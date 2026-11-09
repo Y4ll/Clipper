@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -2607,6 +2607,10 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             note += ". Falta la clave de Gemini: se eligieron los momentos por volumen."
         if job.get("note"):
             note += ". " + job["note"]
+        if load_settings().get("skip_repeats", True) and not job.get("_live_parent") and moments:
+            moments, nrep = drop_repeats(moments, job.get("name", ""), job.get("offset", 0))
+            if nrep:
+                note += f". Se quitaron {nrep} momento(s) que ya habias sacado de este video"
         job.update(state="ready", msg=note, pct=100, duration=duration,
                    wave=wave_data, wave_step=step,
                    moments=moments)
@@ -2678,6 +2682,48 @@ def make_thumbnail(clip, dest, length, title):
         except OSError:
             pass
     return ok
+
+
+def library_read():
+    out = []
+    try:
+        for ln in LIBRARY_FILE.read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(ln))
+            except ValueError:
+                continue
+    except OSError:
+        pass
+    return out
+
+
+def drop_repeats(moments, source, offset):
+    """Quita momentos que ya se sacaron antes de ESTE mismo video (misma fuente, tiempos que se pisan)."""
+    prev = [r for r in library_read() if r.get("source") == source and not r.get("live")]
+    if not prev:
+        return moments, 0
+    keep = []
+    for m in moments:
+        a = float(m["start"]) + float(offset)
+        b = a + float(m.get("len") or 30)
+        dup = any(min(b, r["start_s"] + r["len_s"]) - max(a, r["start_s"]) > 0.5 * (b - a) for r in prev
+                  if "start_s" in r and "len_s" in r)
+        if not dup:
+            keep.append(m)
+    if not keep:   # si todo es repetido, no se deja vacio: el usuario quiza quiere volver a sacarlos
+        return moments, 0
+    return keep, len(moments) - len(keep)
+
+
+def day_report():
+    today = time.strftime("%Y-%m-%d")
+    rs = [r for r in library_read() if str(r.get("created", "")).startswith(today)]
+    pts = [r.get("points", 0) for r in rs if r.get("points")]
+    best = sorted(rs, key=lambda r: -r.get("points", 0))[:3]
+    return {"count": len(rs), "avg": round(sum(pts) / len(pts)) if pts else 0,
+            "best": [{"title": r.get("title") or Path(r.get("file", "")).name, "points": r.get("points", 0),
+                      "source": r.get("source", "")} for r in best],
+            "seconds": int(sum(r.get("len_s", 0) for r in rs))}
 
 
 def save_extras(clip, dest, length, ai, points=0):
@@ -3436,6 +3482,8 @@ class Handler(BaseHTTPRequestHandler):
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
                         "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
+        elif u.path == "/report":
+            self._json(day_report())
         elif u.path == "/hw":
             self._json(dict(HW, encoder=ENCODER["name"], encoder_ready=ENCODER["ready"]))
         elif u.path == "/streamers":

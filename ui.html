@@ -512,6 +512,9 @@ input[type=range]{accent-color:var(--yellow);width:100%}
 
     <div class="lbl" style="color:var(--yellow);margin-bottom:6px">💻 Tu PC</div>
     <div class="note" id="hwBox" style="margin-bottom:6px">Mirando tu PC…</div>
+    <div class="lbl" style="color:var(--yellow);margin:8px 0 6px">📊 Resumen de hoy</div>
+    <div class="note" id="repBox" style="margin-bottom:10px">…</div>
+    <label class="ck"><input type="checkbox" id="skip_repeats"><span>No repetir momentos<small>Quita lo que ya sacaste antes del mismo video</small></span></label>
     <label class="ck"><input type="checkbox" id="fast_link"><span>Análisis rápido de links<small>Baja solo el audio para analizar y el video solo de los clips</small></span></label>
     <label class="ck"><input type="checkbox" id="auto_hw"><span>Adaptar a mi PC<small>En un PC flojo baja solo lo que pesa (zoom, calidad, 720p)</small></span></label>
     <!-- IA -->
@@ -588,7 +591,7 @@ document.querySelectorAll(".buildtxt").forEach(e=>e.textContent=BUILD);
 
 /* ---------- ajustes ---------- */
 let QUERY="";
-const S={fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+const S={skip_repeats:true,fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
 document.querySelectorAll("#pick .pc").forEach(b=>b.onclick=()=>{if(b.disabled)return;const m=b.dataset.m;S.smart=m!=="sin";S.ai_rank=m==="ia";paint();persist()});
@@ -607,7 +610,7 @@ function paint(){
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","skip_repeats","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
@@ -633,7 +636,7 @@ $("#partsSel").onchange=e=>{const f=e.target.value==="full",a=e.target.value==="
 document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","skip_repeats","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";
@@ -677,6 +680,11 @@ $("#tplDel").onclick=async()=>{const n=$("#tplSel").value;if(!n)return;const r=a
   $("#tplNote").textContent=r.ok?"Plantilla borrada: "+n:(r.error||"No se pudo borrar.");loadTpls()};
 /* ---------- capacidades ---------- */
 let CAPS={};
+async function loadReport(){
+  let d;try{d=await(await API("/report")).json()}catch(e){return}
+  if(!d.count){$("#repBox").textContent="Hoy todavía no has guardado clips.";return}
+  $("#repBox").innerHTML="Clips de hoy: <b>"+d.count+"</b> ("+Math.round(d.seconds/60)+" min) · nota media <b>"+d.avg+"</b><br>"+d.best.map(b=>"🔥 "+b.points+" · "+esc(b.title)).join("<br>");
+}
 async function loadHW(){
   let d;try{d=await(await API("/hw")).json()}catch(e){return}
   if(!d.ready){setTimeout(loadHW,3000);return}
@@ -869,12 +877,30 @@ $("#file").onchange=e=>{[...e.target.files].forEach(upload);e.target.value=""};
 ["dragleave","drop"].forEach(ev=>$("#drop").addEventListener(ev,e=>{e.preventDefault();$("#drop").classList.remove("over")}));
 $("#drop").addEventListener("drop",e=>{[...e.dataTransfer.files].forEach(f=>{if(/^video\//.test(f.type)||/\.(mp4|mov|mkv|webm|avi|m4v)$/i.test(f.name))upload(f)})});
 $("#btnUrl").onclick=async()=>{
-  const url=$("#url").value.trim();if(!url)return;
+  const all=$("#url").value.trim().split(/[\s,]+/).filter(x=>/^https?:\/\//i.test(x));
+  if(all.length>1){   // varios links: se analizan uno tras otro (no todos a la vez, para no ahogar el PC)
+    $("#url").value="";
+    for(const link of all){
+      $("#url").value=link;await submitLink(link);
+      let id=window.__lastJob;if(!id)continue;
+      for(let k=0;k<2000;k++){   // espera a que ese termine de analizar (un directo se sigue grabando: no se espera)
+        await new Promise(r=>setTimeout(r,2000));
+        let d;try{d=await(await API("/status?id="+id)).json()}catch(e){break}
+        if(d.error||!["queued","analyzing"].includes(d.state)||d.live||d.recording)break;
+      }
+    }
+    $("#url").value="";return;
+  }
+  await submitLink($("#url").value.trim());
+};
+async function submitLink(url){
+  if(!url)return;
   const num=id=>Number($("#"+id).value)||0;
   const r=await post("/fetch",{url,n:S.n,len:analysisLen(),smart:S.smart,ai_rank:S.ai_rank,live_clips:S.live_clips,clip_every_min:S.clip_every_min,query:QUERY,snap:S.snap,lang:S.sub_lang,last_min:num("lastMin"),from_min:num("fromMin"),to_min:num("toMin")});
   if(r.error){alert(r.error);return}
+  window.__lastJob=r.id;
   $("#url").value="";addJobCard(r.id,"Video del link");
-};
+}
 
 const LABEL={queued:"En cola",analyzing:"Analizando",ready:"Listo para revisar",rendering:"Cortando",done:"Terminado",error:"Error",cancelled:"Cancelado"};
 async function poll(id){
@@ -1025,7 +1051,7 @@ $("#drop").addEventListener("keydown",e=>{if(e.key==="Enter"||e.key===" "){e.pre
 (async function init(){
   try{const s=await (await API("/settings")).json();Object.assign(S,s);if(!s.fps30){S.fps=30;S.fps30=true;persist()}}catch(e){}
   if(!Array.isArray(S.texts))S.texts=[];
-  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadHW();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
+  paint();renderTexts();loadCaps();loadAssets();checkUpd();loadHW();loadReport();loadMonitor();loadMonCfg();setInterval(loadMonitor,15000);loadYoutube();loadTpls();
   if(!S.intro_seen)$("#intro").style.display="block";updateGen();
   $("#introOk").onclick=()=>{S.intro_seen=true;$("#intro").style.display="none";persist()};
   const open=new URLSearchParams(location.search).get("open");
