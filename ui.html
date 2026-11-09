@@ -919,9 +919,11 @@ function startRender(J){
 }
 
 /* ---------- editor de momentos ---------- */
+function viralTag(p){const c=p>=70?"var(--green)":p>=45?"var(--yellow)":"var(--red)",t=p>=70?"ALTO":p>=45?"MEDIO":"BAJO";return `<b style="color:${c}">🔥 ${p}/100 · potencial ${t}</b>`}
+function viralVideo(ms){const ps=(ms||[]).map(m=>m.points||0).filter(x=>x>0).sort((a,b)=>b-a);if(!ps.length)return "";const top=ps.slice(0,3),p=Math.round(0.6*ps[0]+0.4*top.reduce((a,b)=>a+b,0)/top.length);return `<div class="note" style="margin:10px 0">Potencial viral de este video: ${viralTag(p)}<br><small>Sale de sus mejores momentos: volumen, cómo arrancan, duración y lo que se habla.</small></div>`}
 function buildEditor(J,d){
   const body=J.el.querySelector(".body");
-  body.innerHTML=`<div class="editor"><div class="note" style="margin:10px 0">${esc(d.msg)}. Arrastra para mover, ajusta los segundos o añade más.</div>
+  body.innerHTML=`<div class="editor">${viralVideo(d.moments)}<div class="note" style="margin:10px 0">${esc(d.msg)}. Arrastra para mover, ajusta los segundos o añade más.</div>
   <video controls preload="metadata" playsinline></video>
   <div class="wave"><canvas></canvas></div>
   <div class="note wavehint">Haz clic en la gráfica para saltar a ese punto. Total: ${fmt(d.duration)}</div>
@@ -978,7 +980,7 @@ function showClips(J,d){
   d.clips.forEach(c=>{
     const src=`/clips/${J.id}/${c.name}?t=${encodeURIComponent(TOKEN)}`;
     html+=`<div class="clip"><video controls preload="metadata" playsinline src="${src}"></video>
-    <div class="meta"><span>${c.part?`Parte ${c.part[0]}/${c.part[1]} · `:""}${c.points?`Nota ${c.points} · `:""}Desde ${esc(c.start)}</span><span>${c.len} s</span></div>
+    <div class="meta"><span>${c.part?`Parte ${c.part[0]}/${c.part[1]} · `:""}${c.points?viralTag(c.points)+" · ":""}Desde ${esc(c.start)}</span><span>${c.len} s</span></div>
     ${c.title?`<div class="note" style="margin:0 0 6px"><b>${esc(c.title)}</b><br>${esc(c.desc||"")}<br>${esc((c.tags||[]).join(" "))}<br><button class="btn sm cp" data-t="${esc(c.title+"\n"+(c.desc||"")+"\n"+(c.tags||[]).join(" "))}">Copiar</button></div>`:""}
     <a class="btn go dl" data-name="${esc(c.name)}" href="${src}&dl=1" download="${esc(c.name)}" style="font-size:15px;padding:9px">Descargar</a></div>`});
   html+=`</div>`;
