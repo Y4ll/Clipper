@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips",
@@ -789,6 +789,35 @@ def keep_intervals(words, length):
     if length - total < 1.0 or total < 5:
         return None
     return segs
+
+
+FILLERS = {"eh", "ehh", "em", "emm", "ehm", "mm", "mmm", "hmm", "um", "umm", "uh", "uhh", "uhm", "ah", "aah"}
+
+
+def drop_fillers(words, length, keep=None):
+    """Quita muletillas (eh, em, um...) de los tramos a conservar. None si casi no hay nada que quitar."""
+    cuts = []
+    for a, b, w in words:
+        if norm_text(w).strip(" .,;:!?¿¡") in FILLERS and 0 < b - a <= 0.9:
+            cuts.append((max(0.0, a - 0.03), min(float(length), b + 0.03)))
+    if not cuts:
+        return keep
+    base = list(keep) if keep else [(0.0, float(length))]
+    out = []
+    for x, e in base:
+        cur = x
+        for c0, c1 in cuts:
+            if c1 <= cur or c0 >= e:
+                continue
+            if c0 > cur:
+                out.append((cur, c0))
+            cur = max(cur, c1)
+        if cur < e:
+            out.append((cur, e))
+    out = [(x, e) for x, e in out if e - x >= 0.15]
+    if not out or sum(e - x for x, e in out) < 3 or (keep is None and length - sum(e - x for x, e in out) < 0.3):
+        return keep
+    return out
 
 
 def remap_time(t, keep):
@@ -1621,6 +1650,8 @@ def build_graph(o, length, filler_idx, logo_idx, n_texts, font, pre, keep=None, 
         ff = f"fontfile='{ff_escape(font)}':" if font else ""
         stage(f"drawtext=textfile={pre}part.txt:expansion=none:{ff}fontsize=64:fontcolor=0xF5C400:"
               "borderw=6:bordercolor=black:x=60:y=150")
+    if o.get("handle_file"):   # @usuario fijo durante todo el clip
+        stage(drawtext(font, o["handle_file"], 46, "0xF5C400", "h*0.065", 0, length + 1))
     size = {"s": 64, "m": 84, "l": 108}[o["text_size"]]
     color = "0xF5C400" if o["text_color"] == "yellow" else "white"
     ypos = {"top": "h*0.10", "center": "(h-text_h)/2", "bottom": "h*0.74"}[o["text_pos"]]
@@ -1653,12 +1684,19 @@ def build_command(video, out, start, length, o, enc, filler, logo, texts_n, cues
         new = f"vs{j}"
         graph += f";[{last}]{drawtext(font, f'{pre}s{j}.txt', 78, 'white', 'h*0.60', a, b)}[{new}]"
         last = new
+    if o.get("fade_io") and length > 2:
+        graph += f";[{last}]fade=t=in:st=0:d=0.3,fade=t=out:st={max(0.0, length - 0.5):.2f}:d=0.5[vfd]"
+        last = "vfd"
     if o.get("res") == 720:
         graph += f";[{last}]scale=720:1280[vres]"
         last = "vres"
     agraph, alabel = build_audio(o, keep, has_audio, music_idx)
     if agraph:
         graph += ";" + agraph
+    if o.get("fade_io") and length > 2 and has_audio:
+        src = alabel if alabel else "[0:a]"
+        graph += f";{src}afade=t=in:st=0:d=0.3,afade=t=out:st={max(0.0, length - 0.5):.2f}:d=0.5[afd]"
+        alabel = "[afd]"
     amap = ["-map", alabel] if alabel else ["-map", "0:a?"]
     cmd = [FFMPEG, "-y", "-nostdin", "-hide_banner", "-loglevel", "error", "-progress", "pipe:1",
            "-nostats"] + inputs + ["-t", str(length), "-filter_complex", graph,
@@ -1758,6 +1796,9 @@ def clean_opts(raw, seg_len=120):
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "parts_full": bool(raw.get("parts") and raw.get("parts_full")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
+        "fade_io": bool(raw.get("fade_io")), "no_filler": bool(raw.get("no_filler")),
+        "cta_on": bool(raw.get("cta_on")), "cta_text": str(raw.get("cta_text") or "")[:40].strip(),
+        "handle_text": str(raw.get("handle_text") or "")[:30].strip(),
         "enhance": bool(raw.get("enhance")), "cut_pauses": bool(raw.get("cut_pauses")),
         "music": bool(raw.get("music")), "music_vol": int(num(raw.get("music_vol"), 0, 100, 25)),
         "gpu": bool(raw.get("gpu")), "autosave": bool(raw.get("autosave")),
@@ -2472,7 +2513,7 @@ def analyze_job(job_id, video=None, url=None, want=5, length=30, rng=None, smart
             job.update(state="error", msg=str(e)[-300:] or "No se pudo analizar el video.")
 
 
-def save_extras(clip, dest, length, ai):
+def save_extras(clip, dest, length, ai, points=0):
     """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
     try:
         subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.5, length * 0.35):.2f}",
@@ -2481,9 +2522,10 @@ def save_extras(clip, dest, length, ai):
     except Exception:  # noqa: BLE001
         pass
     ai = ai or {}
-    if ai.get("title") or ai.get("desc") or ai.get("tags"):
+    if ai.get("title") or ai.get("desc") or ai.get("tags") or points:
         try:
-            txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", []))) if x)
+            txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", [])),
+                                        f"Puntuacion viral: {points}/100" if points else "") if x)
             Path(dest).with_suffix(".txt").write_text(txt + "\n", encoding="utf-8")
         except OSError:
             pass
@@ -2579,6 +2621,8 @@ def render_job(job_id, video, segments, o):
             keep, out_len = None, length
             if o["cut_pauses"] and heard:
                 keep = keep_intervals(heard, length)
+            if o.get("no_filler") and heard:
+                keep = drop_fillers(heard, length, keep)
             peaks = clip_peaks(ENERGY.get(job_id), start, length) if o["zoom_auto"] else []
             if keep:
                 out_len = round(sum(e - x for x, e in keep), 2)
@@ -2597,6 +2641,11 @@ def render_job(job_id, video, segments, o):
                 (jdir / f"{pre}part.txt").write_text(oc["part_label"], encoding="utf-8")
             if ai and not o["texts"]:
                 oc["texts"] = [{"text": ai["title"], "start": 0.3, "end": min(4.0, out_len)}]
+            if o.get("cta_on") and o.get("cta_text") and out_len > 6:   # llamada a seguir en los ultimos 3 s
+                oc["texts"] = list(oc["texts"]) + [{"text": o["cta_text"], "start": max(0.0, out_len - 3.0), "end": out_len}]
+            if o.get("handle_text") and font:
+                (jdir / f"{pre}handle.txt").write_text(o["handle_text"], encoding="utf-8")
+                oc["handle_file"] = f"{pre}handle.txt"
             wrap_w = {"s": 20, "m": 16, "l": 12}[o["text_size"]]
             texts = oc["texts"] if font else []
             for k, t in enumerate(texts):
@@ -2657,7 +2706,7 @@ def render_job(job_id, video, segments, o):
                 except OSError:
                     warn(f"No se pudo guardar el clip {i} en la carpeta.")
                 else:
-                    save_extras(out, dest, out_len, ai)
+                    save_extras(out, dest, out_len, ai, seg.get("points", 0))
             with lock:
                 fracs[i - 1] = 1.0
                 results[i - 1] = {"name": out.name, "start": fmt_time(start + offset),

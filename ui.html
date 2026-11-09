@@ -440,6 +440,11 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <label class="row"><svg class="ic"><use href="#i-prog"/></svg><span>Barra de progreso<small>Una barra amarilla que avanza</small></span><input class="sw" type="checkbox" id="bar"></label>
       <label class="row"><svg class="ic"><use href="#i-mic"/></svg><span>Mejorar voz<small>Quita ruido e iguala el volumen</small></span><input class="sw" type="checkbox" id="enhance"></label>
       <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Cortar pausas<small>Solo si se habla casi todo el tiempo</small></span><input class="sw" type="checkbox" id="cut_pauses"></label>
+      <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Quitar muletillas<small>Corta los "eh", "em", "um" (necesita subtítulos)</small></span><input class="sw" type="checkbox" id="no_filler"></label>
+      <label class="row"><svg class="ic"><use href="#i-star"/></svg><span>Fundidos<small>Entra y sale suave, imagen y sonido</small></span><input class="sw" type="checkbox" id="fade_io"></label>
+      <label class="row"><svg class="ic"><use href="#i-star"/></svg><span>Texto final<small>Aparece en los últimos 3 segundos</small></span><input class="sw" type="checkbox" id="cta_on"></label>
+      <div class="fld"><input type="text" id="cta_text" maxlength="40" placeholder="Sígueme para más" style="width:100%"></div>
+      <div class="fld"><label for="handle_text">Tu @usuario fijo:</label><input type="text" id="handle_text" maxlength="30" placeholder="@tucanal" style="width:100%"></div>
       <label class="row"><svg class="ic"><use href="#i-music"/></svg><span>Música de fondo<small>Baja sola cuando alguien habla</small></span><input class="sw" type="checkbox" id="music"></label>
       <div class="musicbox"><button class="btn sm" id="btnMusic">Elegir canción</button> <span class="note" id="musicName"></span> <button class="btn sm danger hidden" id="btnMusicDel">Quitar</button>
         <div style="margin-top:8px;font-size:13px">Volumen de la música: <b id="mvv">25</b>%</div><input type="range" id="music_vol" min="0" max="100" value="25"></div>
@@ -610,9 +615,9 @@ function chips(id,key,cb){
 function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
-  $("#schedule_at").value=S.schedule_at||"";$("#schedule_gap").value=S.schedule_gap||60;
+  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
@@ -638,7 +643,7 @@ $("#partsSel").onchange=e=>{const f=e.target.value==="full",a=e.target.value==="
 document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";
@@ -740,6 +745,7 @@ $("#ttConnect").onclick=async()=>{
 $("#ttOff").onclick=async()=>{await post("/tiktok/disconnect");$("#ttMsg").textContent="";loadTikTok()};
 $("#tt_auto").onchange=e=>{post("/tiktok/config",{auto:e.target.checked})};
 $("#clip_every_min").onchange=e=>{S.clip_every_min=Number(e.target.value)||15;persist()};
+$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
 $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
