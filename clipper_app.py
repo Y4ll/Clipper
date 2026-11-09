@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -1814,7 +1814,7 @@ def asset_path(role):
     return found[0] if found else None
 
 
-def clean_opts(raw, seg_len=120):
+def _clean_opts_raw(raw, seg_len=120):
     raw = raw if isinstance(raw, dict) else {}
 
     def pick(key, allowed, default):
@@ -1864,6 +1864,25 @@ def clean_opts(raw, seg_len=120):
         "yt_upload": bool(raw.get("yt_upload")),
         "yt_privacy": pick("yt_privacy", ("private", "unlisted", "public"), "private"),
     }
+
+
+def clean_opts(raw):
+    """Ajustes limpios; en un PC flojo la app baja sola lo que mas pesa (si 'Adaptar a mi PC' esta activo)."""
+    o = _clean_opts_raw(raw)
+    o["adapted"] = []
+    o["auto_hw"] = bool((raw or {}).get("auto_hw", True))
+    if (raw or {}).get("auto_hw", True) and HW.get("ready"):
+        weak = HW.get("cores", 4) <= 2 or 0 < HW.get("ram_gb", 8) < 6
+        if weak and not ENCODER.get("name"):   # sin tarjeta grafica y con poca CPU/RAM
+            if o["quality"] != "fast":
+                o["quality"] = "fast"; o["adapted"].append("calidad rapida")
+            if o["zoom"] or o["shake"]:
+                o["zoom"] = o["shake"] = False; o["adapted"].append("sin zoom ni shake")
+            if o["fps"] == 60:
+                o["fps"] = 30; o["adapted"].append("30 fps")
+            if o.get("res") == 1080 and HW.get("cores", 4) <= 2:
+                o["res"] = 720; o["adapted"].append("720p")
+    return o
 
 
 def safe_stem(name):
@@ -2610,6 +2629,8 @@ def render_job(job_id, video, segments, o):
     try:
         job.update(state="rendering", msg="Preparando...", pct=0, clips=[], saved=[], warnings=[],
                    ready_clips=[])
+        if o.get("adapted"):
+            job["warnings"].append("Adaptado a tu PC: " + ", ".join(o["adapted"]) + ". Se puede apagar en Ajustes → Adaptar a mi PC.")
         job["warnings"].extend(job.pop("_pre_warn", []))
         font = find_font()
         if (o["texts"] or o["subs"]) and not font:
@@ -2812,6 +2833,8 @@ def render_job(job_id, video, segments, o):
 
         cpus = os.cpu_count() or 2
         workers = 1 if (cpus <= 2 or total == 1) else (2 if cpus < 8 else 3)
+        if o.get("auto_hw", True) and 0 < HW.get("ram_gb", 8) < 6:
+            workers = 1
         if o["subs"]:
             workers = min(workers, 2)
         errors = []
