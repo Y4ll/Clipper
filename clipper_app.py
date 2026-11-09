@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -785,6 +785,18 @@ def fix_words(words, o):
             mutes.append((round(a, 2), round(b, 2)))
         out.append((a, b, w))
     return out, mutes[:30]
+
+
+def trim_lead(words, length, keep=None):
+    """Empieza donde empieza la voz (el gancho va en el primer segundo). Solo si hay mas de 1 s de silencio al inicio."""
+    if not words or words[0][0] <= 1.0:
+        return keep
+    t0 = max(0.0, words[0][0] - 0.3)
+    base = list(keep) if keep else [(0.0, float(length))]
+    out = [(max(x, t0), e) for x, e in base if e > t0 + 0.15]
+    if not out or sum(e - x for x, e in out) < 3:
+        return keep
+    return out
 
 
 def remap_time(t, keep):
@@ -1765,6 +1777,7 @@ def clean_opts(raw, seg_len=120):
         "sub_translate": bool(raw.get("sub_translate")),
         "parts": bool(raw.get("parts")), "parts_full": bool(raw.get("parts") and raw.get("parts_full")), "part_len": int(num(raw.get("part_len") or raw.get("len"), 8, 120, 30)),
         "zoom_auto": bool(raw.get("zoom_auto")), "bar": bool(raw.get("bar")),
+        "trim_start": bool(raw.get("trim_start")),
         "vocab": str(raw.get("vocab") or "")[:1500], "censor": bool(raw.get("censor")),
         "fade_io": bool(raw.get("fade_io")), "no_filler": bool(raw.get("no_filler")),
         "cta_on": bool(raw.get("cta_on")), "cta_text": str(raw.get("cta_text") or "")[:40].strip(),
@@ -2607,6 +2620,8 @@ def render_job(job_id, video, segments, o):
                 keep = keep_intervals(heard, length)
             if o.get("no_filler") and heard:
                 keep = drop_fillers(heard, length, keep)
+            if o.get("trim_start") and heard:
+                keep = trim_lead(heard, length, keep)
             peaks = clip_peaks(ENERGY.get(job_id), start, length) if o["zoom_auto"] else []
             if keep:
                 out_len = round(sum(e - x for x, e in keep), 2)

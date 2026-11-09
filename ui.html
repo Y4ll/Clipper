@@ -440,6 +440,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <label class="row"><svg class="ic"><use href="#i-mic"/></svg><span>Mejorar voz<small>Quita ruido e iguala el volumen</small></span><input class="sw" type="checkbox" id="enhance"></label>
       <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Cortar pausas<small>Solo si se habla casi todo el tiempo</small></span><input class="sw" type="checkbox" id="cut_pauses"></label>
       <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Quitar muletillas<small>Corta los "eh", "em", "um" (necesita subtítulos)</small></span><input class="sw" type="checkbox" id="no_filler"></label>
+      <label class="row"><svg class="ic"><use href="#i-cut"/></svg><span>Empezar al hablar<small>Quita el silencio del inicio (necesita subtítulos)</small></span><input class="sw" type="checkbox" id="trim_start"></label>
       <label class="row"><svg class="ic"><use href="#i-star"/></svg><span>Fundidos<small>Entra y sale suave, imagen y sonido</small></span><input class="sw" type="checkbox" id="fade_io"></label>
       <label class="row"><svg class="ic"><use href="#i-mic"/></svg><span>Censurar groserías<small>Pone *** en los subtítulos y silencia el audio</small></span><input class="sw" type="checkbox" id="censor"></label>
       <div class="fld"><label for="vocab">Tu vocabulario (corrige subtítulos):</label><textarea id="vocab" rows="3" maxlength="1500" placeholder="nombre mal escrito=Nombre bien" style="width:100%"></textarea></div>
@@ -602,7 +603,7 @@ function paint(){
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
@@ -628,7 +629,7 @@ $("#partsSel").onchange=e=>{const f=e.target.value==="full",a=e.target.value==="
 document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";
