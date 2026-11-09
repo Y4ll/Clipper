@@ -848,13 +848,15 @@ $("#btnUpd").onclick=async()=>{updBusy=true;$("#btnUpd").disabled=true;$("#banne
 const JOBS={};
 function addJobCard(id,name){
   const el=document.createElement("div");el.className="job";el.id="job"+id;
-  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm clipnow hidden">Clip ya</button><button class="btn sm stoplive hidden">Analizar lo grabado ya</button><button class="btn sm danger cancel">Cancelar</button></div>
+  el.innerHTML=`<div class="jobhead"><div class="jobname">${esc(name)}</div><span class="state"></span><button class="btn sm clipnow hidden">Clip ya</button><button class="btn sm stoplive hidden">Analizar lo grabado ya</button><button class="btn sm savevod hidden">Guardar directo</button><button class="btn sm danger cancel">Cancelar</button></div>
   <div class="bar"><i></i></div><div class="msg"></div><div class="body"></div>`;
   $("#jobs").prepend(el);
   JOBS[id]={id,el,name,state:"",segs:null,rendered:false,view:null};
   el.querySelector(".cancel").onclick=()=>post("/cancel?id="+id);
   el.querySelector(".stoplive").onclick=()=>post("/stoplive?id="+id);
   el.querySelector(".clipnow").onclick=async()=>{const r=await post("/clipnow?id="+id);if(r.error)alert(r.error)};
+  el.querySelector(".savevod").onclick=async()=>{const r=await post("/savelive?id="+id);if(r.error){alert(r.error);return}
+    alert(r.saving?"Se guardará el directo (desde esta parte en adelante) en:\n"+r.folder:"Dejó de guardarse el directo.")};
   poll(id);
 }
 function upload(file){
@@ -921,6 +923,7 @@ function update(J,d){
   el.querySelector(".stoplive").classList.toggle("hidden",!d.live);
   el.querySelector(".stoplive").textContent=d._live_opts?"Parar de grabar":"Analizar lo grabado ya";
   el.querySelector(".clipnow").classList.toggle("hidden",!(d.live&&d._live_opts));
+  {const sv=el.querySelector(".savevod");sv.classList.toggle("hidden",!d.live);sv.textContent=d._save_vod?"Guardando directo ✓ (parar)":"Guardar directo";sv.title="Guarda la grabación del directo en tu carpeta de salida"}
   el.querySelector(".cancel").classList.toggle("hidden",["done","error","cancelled"].includes(d.state));
   (d.children||[]).forEach(cid=>{if(!MON_SEEN.has(cid)){MON_SEEN.add(cid);addJobCard(cid,"Lote del directo")}});
   if(d.state==="ready"&&d._auto_render&&J.view!=="ready"){J.view="ready";J.waiting=false}   // lote del directo: se corta solo

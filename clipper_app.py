@@ -221,14 +221,17 @@ def monitor_start_segment(url, name, st):
     job_id = new_job(name or url)
     JOBS[job_id]["monitor"] = True
     JOBS[job_id]["_template"] = next((x["template"] for x in load_streamers() if x["url"] == url), "") or None
-    JOBS[job_id]["_mon_save_stream"] = mon_save
+    if mon_save:   # guarda todas las partes del directo (no solo la primera)
+        JOBS[job_id]["_save_vod"] = True
+        JOBS[job_id]["_save_from"] = 1
     if st.get("segments"):
         JOBS[job_id]["_live_edge"] = True     # los tramos siguientes empiezan desde ahora, sin repetir
     with MONITOR_LOCK:
         st["job_id"] = job_id
         st["segments"] = st.get("segments", 0) + 1
     seg_min = min(MONITOR_SEGMENT_MIN, mon_max_hours * 60)
-    smart = {"lang": "es", "query": "", "ai_rank": False, "live_clips": True,
+    smart = {"lang": "es", "query": "", "ai_rank": False,
+             "live_clips": bool(cfg.get("mon_auto_clips", True)),   # apagado: solo graba
              "clip_every": mon_clip_every * 60}
     threading.Thread(target=analyze_job,
                      args=(job_id, None, url, 5, mon_clip_len, (0, None, seg_min), smart, True),
@@ -2003,30 +2006,40 @@ LIVE_MAX_SPAN = 32 * 60    # un tramo nunca analiza mas de 32 min (30 de interva
 def video_gaps(video, min_gap=0.6):
     """Huecos de video (se pierden fotogramas pero el audio sigue): lista de (inicio, fin) en segundos.
 
-    Lee solo los tiempos de cada fotograma (sin decodificar), asi que tarda ~2 s por cada 30 min."""
+    Incluye el inicio y el final: si el audio empieza antes o acaba despues que el video (justo al
+    borde del directo que se esta grabando), ese tramo tambien cuenta como hueco.
+    Lee solo los tiempos de cada paquete (sin decodificar), asi que tarda ~2 s por cada 30 min."""
     try:
         r = subprocess.run([FFMPEG, "-v", "error", "-nostdin", "-i", str(video), "-map", "0:v:0",
-                            "-c", "copy", "-f", "framecrc", "-"], stdin=subprocess.DEVNULL,
-                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=300,
-                           creationflags=NO_WINDOW)
+                            "-map", "0:a:0?", "-c", "copy", "-f", "framecrc", "-"],
+                           stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                           timeout=300, creationflags=NO_WINDOW)
     except Exception:  # noqa: BLE001
         return []
-    tb, pts = 1.0 / 90000, []
+    tbs, vid, aud = {"0": 1.0 / 90000, "1": 1.0 / 90000}, [], []
     for line in r.stdout.decode("utf-8", "ignore").splitlines():
-        if line.startswith("#tb 0:"):
+        if line.startswith("#tb "):
             try:
-                a, b = line.split()[-1].split("/")
-                tb = float(a) / float(b)
-            except (ValueError, ZeroDivisionError):
+                idx = line.split()[1].rstrip(":")
+                a_, b_ = line.split()[-1].split("/")
+                tbs[idx] = float(a_) / float(b_)
+            except (ValueError, ZeroDivisionError, IndexError):
                 pass
-        elif line and line[0] == "0":
+        elif line and line[0] in "01":
             f = line.split(",")
             try:
-                pts.append(int(f[1]) * tb)
+                (vid if line[0] == "0" else aud).append(int(f[1]) * tbs[line[0]])
             except (IndexError, ValueError):
                 continue
-    pts.sort()
-    return [(a, b) for a, b in zip(pts, pts[1:]) if b - a > min_gap]
+    vid.sort()
+    gaps = [(a, b) for a, b in zip(vid, vid[1:]) if b - a > min_gap]
+    if vid and aud:
+        a0, a1 = min(aud), max(aud)
+        if vid[0] - a0 > min_gap:
+            gaps.insert(0, (a0, vid[0]))
+        if a1 - vid[-1] > min_gap:
+            gaps.append((vid[-1], a1))
+    return gaps
 
 
 def fit_around_gaps(start, length, gaps, pad=0.3):
@@ -2163,6 +2176,42 @@ def _live_clipper(job_id, live_ctx, state, opts):
             done_until = 0.0
 
 
+def vod_dir():
+    """Carpeta donde se guarda el directo completo: la de salida, o Videos/Clipper si no hay."""
+    d = str(load_settings().get("out_dir") or "").strip()
+    p = Path(d).expanduser() if d else Path.home() / "Videos" / "Clipper"
+    p.mkdir(parents=True, exist_ok=True)
+    return p
+
+
+def vod_store(job, src, part_num, move):
+    """Boton 'Guardar directo': deja una parte grabada en la carpeta. Si falla, el archivo se conserva."""
+    try:
+        base = f"{safe_stem(job.get('name') or 'directo')}_directo_parte{part_num}"
+        dest = unique_path(vod_dir(), base, ".mp4")
+        if move:
+            shutil.move(str(src), str(dest))
+        else:
+            shutil.copyfile(src, dest)
+        job.setdefault("_vod_saved", []).append(str(dest))
+        return True
+    except OSError as e:
+        job.setdefault("warnings", []).append(
+            f"No se pudo guardar la parte {part_num} del directo: {e.strerror or 'error de disco'}.")
+        return False
+
+
+def dispose_part(job, fp):
+    """Una parte grabada ya no se necesita: se guarda (si el usuario pidio guardar el directo) o se borra."""
+    fp = Path(fp)
+    m = re.match(r"input_(\d+)\.mp4$", fp.name)
+    num = int(m.group(1)) if m else 0
+    if job.get("_save_vod") and num and num >= job.get("_save_from", 10 ** 6):
+        vod_store(job, fp, num, True)   # si no se pudo mover, se conserva donde esta
+    else:
+        fp.unlink(missing_ok=True)
+
+
 def record_live(job_id, meta, jdir, rng, live_opts=None):
     """Directo: graba en partes (input_1.mp4, input_2.mp4...) hasta que el directo termine.
 
@@ -2232,6 +2281,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                 live_ctx["part_ended"] = threading.Event()   # nuevo evento: esta parte aun no termino
                 live_ctx["part_ready"] = threading.Event()   # _live_clipper aun no termino su ronda
             job["_live_out"] = str(out)
+            job["_part_num"] = part_num
             job["_part_offset_snapshot"] = part_offset   # para /clipnow
             job["_rec_sec"] = 0.0
             job["_rec_done"] = False
@@ -2346,7 +2396,8 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
             # Esperar a que _live_clipper termine la ronda final de esta parte (max 2 min)
             # part_ready se activa cuando el clipper termino de analizar o no habia nada
             part_ready_ev: threading.Event = live_ctx["part_ready"]
-            part_ready_ev.wait(timeout=120)
+            if live_opts:   # sin clips automaticos no hay nadie que lo active: no se espera (se perderia directo)
+                part_ready_ev.wait(timeout=120)
             # (si expira el timeout seguimos igualmente: no bloqueamos el directo)
 
             # Comprobar si el directo sigue en vivo
@@ -2378,7 +2429,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                     for c in job.get("children", [])):
                 for fp in job.pop("_keep_parts"):
                     try:
-                        Path(fp).unlink(missing_ok=True)
+                        dispose_part(job, fp)
                     except OSError:
                         pass
             # poco espacio en disco: se para limpiamente en vez de fallar a mitad de parte
@@ -2422,7 +2473,7 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
                     continue_delete = True
                 try:
                     if continue_delete:
-                        prev_out.unlink()
+                        dispose_part(job, prev_out)
                     with open(logf, "a", encoding="utf-8") as lf:
                         lf.write(f"parte {part_num}: {'borrada' if continue_delete else 'se conserva (en uso)'} "
                                  f"(offset {part_offset - sec_recorded:.0f}s - {part_offset:.0f}s)\n")
@@ -2436,24 +2487,21 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
 
     if state["cancel"].is_set():
         raise Cancelled()
+    if job.get("_save_vod"):   # lo que quedo en disco de las partes elegidas (la ultima y la primera si cuenta)
+        try:
+            job["msg"] = "Guardando el directo en la carpeta..."
+            for fp in sorted(jdir.glob("input_*.mp4")):
+                m = re.match(r"input_(\d+)\.mp4$", fp.name)
+                if m and int(m.group(1)) >= job.get("_save_from", 10 ** 6) and fp.stat().st_size > 10000:
+                    vod_store(job, fp, int(m.group(1)), False)
+            if job.get("_vod_saved"):
+                job.setdefault("warnings", []).append(f"Directo guardado en: {vod_dir()}")
+        except OSError:
+            pass
     out_final = first_out or (jdir / "input_1.mp4")
     if not out_final.is_file() or out_final.stat().st_size < 10000:
         raise RuntimeError("No se pudo grabar el directo. " + " | ".join(list(tail)[-3:])[-300:])
     job["offset"] = 0
-
-    # Guardar la grabación completa si el usuario lo pidió
-    if job.get("_mon_save_stream"):
-        try:
-            cfg = load_settings()
-            save_dir = Path(cfg.get("out_dir") or jdir)
-            save_dir.mkdir(parents=True, exist_ok=True)
-            safe = safe_stem(meta.get("title") or meta.get("id") or job.get("name") or "directo")
-            dest = unique_path(save_dir, f"{safe}_completo", ".mp4")
-            shutil.copy2(out_final, dest)
-            job.setdefault("extra_files", []).append(str(dest))
-            job["msg"] = f"Grabación guardada: {dest.name}"
-        except Exception as _e:
-            job.setdefault("warnings", []).append(f"No se pudo guardar la grabación: {_e}")
 
     return out_final
 
@@ -3686,6 +3734,22 @@ class Handler(BaseHTTPRequestHandler):
             spawn_live_child(jid, out_path, max(0.0, cur - 2 - dur), dur, lo,
                              direct=True, part_offset=part_offset)
             self._json({"ok": True})
+        elif u.path == "/savelive":
+            jid = q.get("id", [""])[0]
+            pj = JOBS.get(jid)
+            if not pj or not pj.get("live"):
+                self._json({"error": "Este directo ya no se esta grabando."}, 400)
+                return
+            try:
+                folder = str(vod_dir())
+            except OSError:
+                self._json({"error": "No pude usar la carpeta de guardado."}, 400)
+                return
+            on = not pj.get("_save_vod")
+            if on:
+                pj["_save_from"] = int(pj.get("_part_num", 1))
+            pj["_save_vod"] = on
+            self._json({"ok": True, "saving": on, "folder": folder})
         elif u.path == "/stoplive":
             jid = q.get("id", [""])[0]
             pj = JOBS.get(jid)
