@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -2748,12 +2748,14 @@ def render_job(job_id, video, segments, o):
             pass
 
 
-def queue_local_file(path):
+def queue_local_file(path, auto=False):
     """Un video arrastrado sobre Clipper.exe (o pasado por la linea de comandos)."""
     src = Path(path)
     if not src.is_file() or src.suffix.lower() not in VIDEO_EXTS:
         return None
     job_id = new_job(src.name)
+    if auto:
+        JOBS[job_id]["_auto_render"] = True   # corta solo, sin esperar a que revises
     dest = WORK / job_id / ("input" + src.suffix.lower())
     shutil.copyfile(src, dest)
     st = load_settings()
@@ -2765,6 +2767,49 @@ def queue_local_file(path):
                      args=(job_id, dest, None, want, seg, None, smart, st.get("snap") is not False),
                      daemon=True).start()
     return job_id
+
+
+WATCH = {"seen": set(), "sizes": {}, "dir": None}
+
+
+def watch_scan():
+    """Carpeta vigilada: cada video nuevo que aparece se analiza y se corta solo."""
+    st = load_settings()
+    d = str(st.get("watch_dir") or "").strip()
+    if not st.get("watch_on") or not d:
+        WATCH["dir"] = None
+        return
+    folder = Path(d)
+    if not folder.is_dir():
+        return
+    files = sorted(f for f in folder.iterdir() if f.is_file() and f.suffix.lower() in VIDEO_EXTS)
+    first = WATCH["dir"] != d
+    WATCH["dir"] = d
+    for f in files:
+        try:
+            stt = f.stat()
+        except OSError:
+            continue
+        key = f"{f}|{stt.st_size}|{int(stt.st_mtime)}"
+        if first:
+            WATCH["seen"].add(key)   # lo que ya habia al activarlo no se toca
+            continue
+        if key in WATCH["seen"]:
+            continue
+        if WATCH["sizes"].get(str(f)) != stt.st_size or stt.st_size < 100_000:
+            WATCH["sizes"][str(f)] = stt.st_size   # aun se esta copiando: espera a la siguiente vuelta
+            continue
+        WATCH["seen"].add(key)
+        queue_local_file(f, auto=True)
+
+
+def watch_loop():
+    while True:
+        try:
+            watch_scan()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(20)
 
 
 def cleanup_all():
@@ -3762,6 +3807,7 @@ def main():
     threading.Thread(target=detect_encoder, daemon=True).start()
     threading.Thread(target=update_loop, daemon=True).start()
     threading.Thread(target=monitor_loop, daemon=True).start()
+    threading.Thread(target=watch_loop, daemon=True).start()
     if args.lan:
         print(f"Desde el iPhone (misma wifi): http://{lan_ip()}:{port}")
         print("Aviso: cualquiera en tu wifi puede entrar mientras esto este abierto.")

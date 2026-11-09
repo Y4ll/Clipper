@@ -545,6 +545,8 @@ input[type=range]{accent-color:var(--yellow);width:100%}
         <label class="ck"><input type="checkbox" id="gpu"><span>Usar tarjeta de video si hay<small id="gpuNote">Más rápido; si falla usa el procesador</small></span></label>
         <label class="ck"><input type="checkbox" id="snap"><span>Terminar clips en pausa<small>Evita cortar a media frase</small></span></label>
         <label class="ck"><input type="checkbox" id="autosave"><span>Auto-guardar en carpeta<small id="outDirTxt">Sin carpeta elegida</small></span></label>
+        <label class="ck"><input type="checkbox" id="watch_on"><span>Carpeta vigilada<small>Cada video nuevo en esa carpeta se corta solo</small></span></label>
+        <div class="fld"><input type="text" id="watch_dir" placeholder="C:\\Videos\\Entrada" style="width:100%"></div>
         <div class="actions" style="margin-top:8px"><button class="btn sm" id="btnDir"><svg class="ic"><use href="#i-folder"/></svg>Elegir carpeta</button><button class="btn sm" id="btnOpenDir">Abrir</button></div>
       </div>
     </div>
@@ -598,9 +600,9 @@ function chips(id,key,cb){
 function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
-  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
+  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
@@ -626,7 +628,7 @@ $("#partsSel").onchange=e=>{const f=e.target.value==="full",a=e.target.value==="
 document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","no_filler","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";
@@ -712,7 +714,7 @@ $("#ytConnect").onclick=async()=>{
 $("#ytOff").onclick=async()=>{await post("/youtube/disconnect");$("#ytMsg").textContent="";loadYoutube()};
 $("#yt_auto").onchange=e=>{S.yt_auto=e.target.checked;persist()};
 $("#clip_every_min").onchange=e=>{S.clip_every_min=Number(e.target.value)||15;persist()};
-$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
+$("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
 $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
