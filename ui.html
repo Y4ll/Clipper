@@ -512,6 +512,7 @@ input[type=range]{accent-color:var(--yellow);width:100%}
 
     <div class="lbl" style="color:var(--yellow);margin-bottom:6px">💻 Tu PC</div>
     <div class="note" id="hwBox" style="margin-bottom:6px">Mirando tu PC…</div>
+    <label class="ck"><input type="checkbox" id="fast_link"><span>Análisis rápido de links<small>Baja solo el audio para analizar y el video solo de los clips</small></span></label>
     <label class="ck"><input type="checkbox" id="auto_hw"><span>Adaptar a mi PC<small>En un PC flojo baja solo lo que pesa (zoom, calidad, 720p)</small></span></label>
     <!-- IA -->
     <div class="lbl" style="color:var(--yellow);margin-bottom:6px">🤖 Inteligencia Artificial</div>
@@ -587,7 +588,7 @@ document.querySelectorAll(".buildtxt").forEach(e=>e.textContent=BUILD);
 
 /* ---------- ajustes ---------- */
 let QUERY="";
-const S={auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+const S={fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
 document.querySelectorAll("#pick .pc").forEach(b=>b.onclick=()=>{if(b.disabled)return;const m=b.dataset.m;S.smart=m!=="sin";S.ai_rank=m==="ia";paint();persist()});
@@ -606,7 +607,7 @@ function paint(){
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
-  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
+  for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
   $("#camBox").classList.toggle("hidden",S.mode!=="cam");
@@ -632,7 +633,7 @@ $("#partsSel").onchange=e=>{const f=e.target.value==="full",a=e.target.value==="
 document.querySelectorAll(".stb").forEach(b=>b.onclick=()=>{const r=$("#"+b.dataset.for);r.value=Math.max(+r.min,Math.min(+r.max,+r.value+ +b.dataset.d));r.dispatchEvent(new Event("input"))});
 $("#n").oninput=e=>{S.n=+e.target.value;paint();persist()};
 $("#len").oninput=e=>{S.len=+e.target.value;S.preset="custom";paint();persist()};
-for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
+for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).onchange=e=>{S[k]=e.target.checked;paint();persist()};
 
 function renderTexts(){
   const box=$("#texts");box.innerHTML="";

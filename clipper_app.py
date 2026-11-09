@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips"}
@@ -1955,8 +1955,29 @@ def download_video(job_id, url, jdir, rng=None):
             offset = start or 0
             opts["download_ranges"] = yt_dlp.utils.download_range_func(
                 None, [(offset, end if end else float("inf"))])
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url, download=True)
+    lazy = (_cfg.get("fast_link", True) and not _cfg.get("parts_full") and dur > 600)
+    info = None
+    if lazy:   # analisis rapido: se baja SOLO el audio (unos MB); el video se baja luego, solo de los clips elegidos
+        aopts = dict(opts, format="worstaudio[abr>=32]/worstaudio/ba/b")
+        aopts.pop("merge_output_format", None)
+        try:
+            job.update(msg="Bajando solo el audio para analizar rapido...", pct=3)
+            with yt_dlp.YoutubeDL(aopts) as ydl:
+                info = ydl.extract_info(url, download=True)
+            job["_lazy_url"], job["_lazy_h"] = url, dl_h
+            job["note"] = (job.get("note", "") + " " if job.get("note") else "") + "Analisis rapido: el video de cada clip se baja solo al cortarlo."
+        except Cancelled:
+            raise
+        except Exception:  # noqa: BLE001
+            if state["cancel"].is_set():
+                raise Cancelled()
+            for f in jdir.glob("input.*"):
+                f.unlink(missing_ok=True)
+            info = None
+            lazy = False
+    if not lazy:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=True)
     files = [f for f in jdir.glob("input.*") if f.suffix not in (".part", ".ytdl")]
     if not files:
         raise RuntimeError("No se pudo descargar el video.")
@@ -2623,6 +2644,28 @@ def save_extras(clip, dest, length, ai, points=0):
             pass
 
 
+def fetch_section(job_id, job, i, a, length):
+    """Modo rapido: baja solo el tramo del video que se va a cortar. Devuelve (archivo, inicio dentro del archivo)."""
+    import yt_dlp
+    pre = max(0.0, a - 1.5)
+    dst = WORK / job_id / f"sec{i}.mp4"
+    h = int(job.get("_lazy_h") or 720)
+    opts = {"outtmpl": str(WORK / job_id / f"sec{i}.%(ext)s"), "noplaylist": True, "quiet": True, "no_warnings": True,
+            "format": f"bv*[height<={h}]+ba/b[height<={h}]/b", "merge_output_format": "mp4",
+            "download_ranges": yt_dlp.utils.download_range_func(None, [(pre, a + length + 1.5)]),
+            "force_keyframes_at_cuts": True, "concurrent_fragment_downloads": 8}
+    if os.path.isabs(FFMPEG):
+        opts["ffmpeg_location"] = str(Path(FFMPEG).parent)
+    with yt_dlp.YoutubeDL(opts) as ydl:
+        ydl.download([job["_lazy_url"]])
+    if not dst.is_file():
+        cand = [f for f in (WORK / job_id).glob(f"sec{i}.*") if f.suffix not in (".part", ".ytdl")]
+        if not cand:
+            raise RuntimeError("No se pudo bajar el tramo del video para el clip " + str(i))
+        dst = cand[0]
+    return dst, a - pre
+
+
 def render_job(job_id, video, segments, o):
     job, jdir = JOBS[job_id], WORK / job_id
     state = rt(job_id)
@@ -2642,7 +2685,7 @@ def render_job(job_id, video, segments, o):
         music = asset_path("music") if o["music"] else None
         if o["music"] and not music:
             job["warnings"].append("Falta la musica de fondo; salio sin musica.")
-        audio_on = has_audio_stream(video)
+        audio_on = True if job.get("_lazy_url") else has_audio_stream(video)
         enc_box = [ENCODER["name"] if (o["gpu"] and ENCODER["name"]) else "libx264"]
         out_dir = None
         if o["autosave"]:
@@ -2690,6 +2733,10 @@ def render_job(job_id, video, segments, o):
                 raise Cancelled()
             start, length = seg["start"], seg["len"]
             pre = f"c{i}_"
+            vsrc, vstart = video, start
+            if job.get("_lazy_url"):   # el video completo no se bajo: se baja solo este tramo
+                job["msg"] = f"Bajando el tramo del clip {i}..."
+                vsrc, vstart = fetch_section(job_id, job, i, start + offset, length)
 
             def progress(frac):
                 fracs[i - 1] = frac * (0.9 if o["subs"] else 1.0) + (0.1 if o["subs"] else 0)
@@ -2701,7 +2748,7 @@ def render_job(job_id, video, segments, o):
                 try:
                     got = None if o["sub_translate"] else heard_cues(job_id, start, length, o["sub_lang"])
                     if got is None:
-                        got = transcribe(job_id, video, start, length, o["sub_lang"], jdir, i,
+                        got = transcribe(job_id, vsrc, vstart, length, o["sub_lang"], jdir, i,
                                          o["sub_translate"])
                     if got is None:
                         warn("Esta version no incluye subtitulos ni titulos con IA.")
@@ -2772,7 +2819,7 @@ def render_job(job_id, video, segments, o):
             enc = enc_box[0]
 
             def attempt(enc_name, use_ass):
-                cmd = build_command(video, out, start, out_len, oc, enc_name, filler, logo,
+                cmd = build_command(vsrc, out, vstart, out_len, oc, enc_name, filler, logo,
                                     len(texts), phrases, font, pre, ass if use_ass else None,
                                     keep, peaks, audio_on, music)
                 run_ffmpeg(cmd, cwd=str(jdir), job_id=job_id, length=out_len, on_progress=progress)
