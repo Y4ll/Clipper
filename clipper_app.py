@@ -945,7 +945,7 @@ def groq_json(prompt, temperature=0.7):
     raise RuntimeError(f"Groq no respondio ({last})")
 
 
-def gemini_title(text, lang, tone="directo"):
+def gemini_title(text, lang, tone="directo", ctx=""):
     """Titulo gancho, descripcion y hashtags con IA (Gemini y, si falla o no hay clave, Groq).
     Solo se envia el texto del clip, nunca el video."""
     key = get_gemini_key()
@@ -955,11 +955,19 @@ def gemini_title(text, lang, tone="directo"):
     tono = {"directo": "directo y llamativo", "gracioso": "gracioso y con humor",
             "dramatico": "dramatico y con tension", "misterioso": "misterioso, que deje con ganas de ver mas",
             "epico": "epico y exagerado"}.get(tone, "directo y llamativo")
-    prompt = ("Eres editor de clips virales para TikTok/Reels/Shorts. Del texto de este clip "
-              f"escribe un TITULO GANCHO de maximo 6 palabras en {idioma}, tono {tono}, en mayusculas, "
-              "sin comillas ni emojis; una descripcion corta para publicar (maximo 140 caracteres) y "
-              "3 hashtags relevantes. Responde solo JSON: "
-              '{"title": "...", "desc": "...", "tags": ["#a", "#b", "#c"]}\n\nTexto del clip:\n' + text[:3000])
+    ctx = re.sub(r"\.(mp4|mkv|webm|mov)$", "", str(ctx or "").strip(), flags=re.I)[:120]
+    prompt = ("Eres editor de clips virales de streamers para TikTok/Reels/Shorts. "
+              f"Escribe un TITULO de maximo 8 palabras en {idioma}, tono {tono}, en mayusculas, sin comillas ni emojis. "
+              "REGLAS: dice QUE PASA en este clip de forma concreta (la accion, la reaccion o la frase mas fuerte), "
+              "no una frase vaga. Si el contexto da el nombre del streamer o del juego/tema, usalo cuando suene natural. "
+              "Prohibido: 'no te lo vas a creer', 'increible', 'mira esto', 'lo que paso' y cosas parecidas. "
+              "No inventes nada que no este en el texto o el contexto. "
+              "Ejemplos buenos: 'RDJAVI SE ROMPE DE RISA CON ESTE MEME', 'CHOCA EL CARRO EN GTA RP Y SE ENOJA', "
+              "'LE ROBAN EN PLENO DIRECTO Y NO LO CREE'. "
+              "Ademas una descripcion corta para publicar (maximo 140 caracteres) y 3 hashtags relevantes "
+              "(uno del streamer o juego si se conoce). Responde solo JSON: "
+              '{"title": "...", "desc": "...", "tags": ["#a", "#b", "#c"]}\n\n'
+              + (f"Contexto (video o streamer): {ctx}\n" if ctx else "") + "Texto del clip:\n" + text[:3000])
 
     def parse(out):
         title = re.sub(r"[\r\n]+", " ", str(out.get("title", ""))).strip().upper()[:60]
@@ -2627,6 +2635,51 @@ def library_add(rec):
         pass
 
 
+def make_thumbnail(clip, dest, length, title):
+    """Miniatura 1080x1920: el cuadro con mas detalle del clip, con el titulo grande encima. Devuelve True si salio."""
+    font = find_font()
+    clip = Path(clip)
+    cwd = clip.parent
+    best, best_size = None, 0
+    for k, frac in enumerate((0.2, 0.4, 0.6)):   # de tres cuadros, el mas nitido (pesa mas el JPG) y no una transicion
+        tmp = cwd / f"_mini{k}.jpg"
+        try:
+            subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-ss", f"{max(0.3, length * frac):.2f}",
+                            "-i", str(clip), "-frames:v", "1", "-vf", "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920",
+                            "-q:v", "2", str(tmp)], stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+            if tmp.is_file() and tmp.stat().st_size > best_size:
+                best, best_size = tmp, tmp.stat().st_size
+        except Exception:  # noqa: BLE001
+            continue
+    if not best:
+        return False
+    out = Path(dest).with_name(Path(dest).stem + "_miniatura.jpg")
+    ok = False
+    if title and font:
+        try:
+            (cwd / "_mini.txt").write_text("\n".join(textwrap.wrap(title.upper(), 12)[:4]), encoding="utf-8")
+            vf = ("drawbox=x=0:y=ih*0.52:w=iw:h=ih*0.34:color=black@0.55:t=fill,"
+                  f"drawtext=textfile=_mini.txt:expansion=none:fontfile='{ff_escape(font)}':fontsize=94:fontcolor=0xF5C400:"
+                  "borderw=9:bordercolor=black:line_spacing=14:x=(w-text_w)/2:y=h*0.55")
+            r = subprocess.run([FFMPEG, "-y", "-hide_banner", "-loglevel", "error", "-i", best.name, "-vf", vf, "-q:v", "2", str(out)],
+                               cwd=str(cwd), stdin=subprocess.DEVNULL, timeout=60, creationflags=NO_WINDOW)
+            ok = r.returncode == 0 and out.is_file()
+        except Exception:  # noqa: BLE001
+            ok = False
+    if not ok:
+        try:
+            shutil.copyfile(best, out)
+            ok = True
+        except OSError:
+            pass
+    for f in list(cwd.glob("_mini*.jpg")) + [cwd / "_mini.txt"]:
+        try:
+            f.unlink()
+        except OSError:
+            pass
+    return ok
+
+
 def save_extras(clip, dest, length, ai, points=0):
     """Junto al clip guardado deja una portada (.jpg) y un .txt con titulo, descripcion y hashtags."""
     try:
@@ -2636,6 +2689,10 @@ def save_extras(clip, dest, length, ai, points=0):
     except Exception:  # noqa: BLE001
         pass
     ai = ai or {}
+    try:
+        make_thumbnail(clip, dest, length, ai.get("title", ""))
+    except Exception:  # noqa: BLE001
+        pass
     if ai.get("title") or ai.get("desc") or ai.get("tags") or points:
         try:
             txt = "\n".join(x for x in (ai.get("title", ""), ai.get("desc", ""), " ".join(ai.get("tags", [])),
@@ -2782,7 +2839,7 @@ def render_job(job_id, video, segments, o):
             ai = None
             if o["ai_title"] and heard:
                 try:
-                    ai = gemini_title(" ".join(w[2] for w in heard), o["sub_lang"], o["ai_tone"])
+                    ai = gemini_title(" ".join(w[2] for w in heard), o["sub_lang"], o["ai_tone"], job.get("name", ""))
                 except Exception as e:  # noqa: BLE001
                     warn(str(e)[:120])
             oc = dict(o)
