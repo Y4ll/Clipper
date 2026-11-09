@@ -377,6 +377,16 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <label class="ck" style="margin-top:8px"><input type="checkbox" id="mon_save_stream"><span>Guardar la grabación completa<small>Además de los clips, guarda el video entero del directo</small></span></label>
       <label class="ck"><input type="checkbox" id="mon_auto_clips"><span>Clips automáticos activados por defecto<small>Los canales nuevos empiezan con clips auto</small></span></label>
       <p class="note" style="margin:6px 0 0">Clipper revisa cada 2 min. Graba en tramos de 60 min hasta que termine (máximo según config). Clipper debe estar abierto.</p>
+      <hr style="margin:10px 0 8px">
+      <label class="ck"><input type="checkbox" id="long_on"><span>Videos largos para YouTube<small>Corta el directo en tramos de la duración elegida y los guarda aparte</small></span></label>
+      <div id="longBox" style="display:none;margin-top:6px">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px 10px">
+          <div class="fld"><label for="long_min">Duración:</label><select id="long_min"><option value="20">20 min</option><option value="30" selected>30 min</option><option value="60">60 min</option></select></div>
+          <div class="fld"><label for="long_mode">Modo:</label><select id="long_mode"><option value="seq" selected>Seguidos</option><option value="best">Mejor tramo</option><option value="both">Ambos</option></select></div>
+          <div class="fld"><label for="long_fmt">Formato:</label><select id="long_fmt"><option value="orig" selected>Horizontal</option><option value="vert">Vertical 9:16</option><option value="both">Los dos</option></select></div>
+        </div>
+        <p class="note" id="longNote" style="margin:4px 0 0"></p>
+      </div>
     </details>
   </section>
 
@@ -591,7 +601,7 @@ document.querySelectorAll(".buildtxt").forEach(e=>e.textContent=BUILD);
 
 /* ---------- ajustes ---------- */
 let QUERY="";
-const S={skip_repeats:true,fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:""};
+const S={skip_repeats:true,fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:"",long_on:false,long_min:30,long_mode:"seq",long_fmt:"orig"};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
 document.querySelectorAll("#pick .pc").forEach(b=>b.onclick=()=>{if(b.disabled)return;const m=b.dataset.m;S.smart=m!=="sin";S.ai_rank=m==="ia";paint();persist()});
@@ -610,6 +620,11 @@ function paint(){
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
   $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#live_clip_len").value=String([20,30,45,60].includes(S.live_clip_len)?S.live_clip_len:30);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
+  $("#long_on").checked=!!S.long_on;$("#longBox").style.display=S.long_on?"":"none";
+  $("#long_min").value=String([20,30,60].includes(S.long_min)?S.long_min:30);
+  $("#long_mode").value=["seq","best","both"].includes(S.long_mode)?S.long_mode:"seq";
+  $("#long_fmt").value=["orig","vert","both"].includes(S.long_fmt)?S.long_fmt:"orig";
+  longNote();
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","skip_repeats","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
@@ -734,6 +749,11 @@ $("#ytOff").onclick=async()=>{await post("/youtube/disconnect");$("#ytMsg").text
 $("#yt_auto").onchange=e=>{S.yt_auto=e.target.checked;persist()};
 $("#clip_every_min").onchange=e=>{S.clip_every_min=Number(e.target.value)||15;persist()};
 $("#live_clip_len").onchange=e=>{S.live_clip_len=Number(e.target.value)||30;persist()};
+function longNote(){const mn=Number($("#long_min").value||30);const fmt=$("#long_fmt").value;if(fmt==="vert"||fmt==="both"){const mins=mn===60?20:mn===30?10:7;$("#longNote").textContent="⚠️ El formato vertical tarda ~"+mins+" min extra por cada tramo de "+mn+" min (codifica todo el video)."}else{$("#longNote").textContent=""}}
+$("#long_on").onchange=e=>{S.long_on=e.target.checked;$("#longBox").style.display=e.target.checked?"":"none";persist()};
+$("#long_min").onchange=e=>{S.long_min=Number(e.target.value)||30;longNote();persist()};
+$("#long_mode").onchange=e=>{S.long_mode=e.target.value;persist()};
+$("#long_fmt").onchange=e=>{S.long_fmt=e.target.value;longNote();persist()};
 $("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};

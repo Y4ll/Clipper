@@ -144,7 +144,8 @@ FONT_CANDIDATES = [
 SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
-                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len"}
+                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len",
+                "long_on", "long_min", "long_mode", "long_fmt"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -2176,6 +2177,175 @@ def _live_clipper(job_id, live_ctx, state, opts):
             done_until = 0.0
 
 
+# ──────────────────────────────────────────── videos largos del directo (long_*)
+LONG_MINUTES = (20, 30, 60)   # opciones válidas para long_min
+LONG_UNIT    = 60.0            # segundos por "minuto" — se pone a 1.0 en tests
+
+def long_cfg():
+    """Lee la configuración de videos largos de settings.json. Devuelve None si está desactivado."""
+    cfg = load_settings()
+    if not bool(cfg.get("long_on")):
+        return None
+    mn = int(cfg.get("long_min") or 20)
+    if mn not in LONG_MINUTES:
+        mn = 20
+    return {
+        "min":  mn,
+        "mode": cfg.get("long_mode") or "seq",   # seq | best | both
+        "fmt":  cfg.get("long_fmt")  or "orig",  # orig | vert | both
+    }
+
+def _long_cut_horiz(src, dest, start_s, dur_s, job_id):
+    """Copia un tramo del stream sin recodificar (keyframe-aligned, muy rápido)."""
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+           "-ss", str(start_s), "-i", str(src),
+           "-t", str(dur_s), "-c", "copy", str(dest)]
+    ret = subprocess.run(cmd, capture_output=True, timeout=300)
+    if ret.returncode != 0 or not Path(dest).is_file() or Path(dest).stat().st_size < 10000:
+        JOBS.get(job_id, {}).setdefault("warnings", []).append(
+            f"long_cut_horiz falló para {Path(dest).name}: {ret.stderr[-200:].decode('utf-8','replace')}")
+        return False
+    return True
+
+def _long_cut_vert(src, dest, start_s, dur_s, job_id):
+    """Renderiza un tramo en vertical (crop centrado 9:16) recodificando en libx264 fast."""
+    # filtro: crop al ancho que da 9:16, luego escalar a 1080x1920
+    vf = "crop=ih*9/16:ih,scale=1080:1920:flags=fast_bilinear"
+    cmd = [FFMPEG, "-y", "-hide_banner", "-loglevel", "error",
+           "-ss", str(start_s), "-i", str(src),
+           "-t", str(dur_s), "-vf", vf,
+           "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+           "-c:a", "aac", "-b:a", "128k",
+           "-movflags", "+faststart", str(dest)]
+    ret = subprocess.run(cmd, capture_output=True, timeout=7200)
+    if ret.returncode != 0 or not Path(dest).is_file() or Path(dest).stat().st_size < 10000:
+        JOBS.get(job_id, {}).setdefault("warnings", []).append(
+            f"long_cut_vert falló para {Path(dest).name}: {ret.stderr[-200:].decode('utf-8','replace')}")
+        return False
+    return True
+
+def _long_best_start(src, start_abs, dur_s, window_s, job_id):
+    """Extrae la energía de audio del tramo y devuelve el mejor sub-tramo de window_s segundos."""
+    try:
+        cmd = [FFMPEG, "-hide_banner", "-loglevel", "error",
+               "-ss", str(start_abs), "-i", str(src), "-t", str(dur_s),
+               "-af", "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-",
+               "-vn", "-f", "null", "-"]
+        ret = subprocess.run(cmd, capture_output=True, timeout=300)
+        lines = (ret.stdout + ret.stderr).decode("utf-8", "replace").splitlines()
+        rms_vals = []
+        for ln in lines:
+            m = re.search(r"RMS_level=(-?\d+(?:\.\d+)?)", ln)
+            if m:
+                v = float(m.group(1))
+                rms_vals.append(0.0 if v < -90 else max(0.0, 90.0 + v) / 90.0)
+        if not rms_vals:
+            return 0.0
+        energy = rms_vals
+        moments = pick_moments(energy, int(dur_s), int(window_s), 1)
+        return float(moments[0]["start"]) if moments else 0.0
+    except Exception:
+        return 0.0
+
+def _long_save(job, src, lc, start_abs, dur_s, part_num, seg_num, job_id):
+    """Genera los archivos de un segmento largo (horizontal y/o vertical según lc['fmt'])."""
+    out_dir = vod_dir()
+    stem = safe_stem(job.get("name") or "directo")
+    dur_min = round(dur_s / 60, 1)
+    saved = []
+
+    if lc["mode"] in ("best", "both"):
+        # mejor sub-tramo de long_min minutos dentro del segmento
+        window = int(lc["min"] * LONG_UNIT)
+        best_offset = _long_best_start(src, start_abs, dur_s, window, job_id)
+        actual_start = start_abs + best_offset
+        actual_dur   = min(window, dur_s - best_offset)
+    else:
+        actual_start = start_abs
+        actual_dur   = dur_s
+
+    def _make(suffix, fn):
+        base = f"{stem}_largo_p{part_num}s{seg_num}{suffix}"
+        dest = unique_path(out_dir, base, ".mp4")
+        ok = fn(src, dest, actual_start, actual_dur, job_id)
+        if ok:
+            saved.append(str(dest))
+            job.setdefault("_long_saved", []).append(str(dest))
+        return ok
+
+    if lc["fmt"] in ("orig", "both"):
+        _make("_horiz", _long_cut_horiz)
+    if lc["fmt"] in ("vert", "both"):
+        _make("_vert", _long_cut_vert)
+
+    if lc["mode"] == "both":
+        # seguidos: el tramo completo también (sin recortar al mejor sub-tramo)
+        if lc["fmt"] in ("orig", "both"):
+            base2 = f"{stem}_largo_p{part_num}s{seg_num}_seq_horiz"
+            dest2 = unique_path(out_dir, base2, ".mp4")
+            if _long_cut_horiz(src, dest2, start_abs, dur_s, job_id):
+                saved.append(str(dest2))
+                job.setdefault("_long_saved", []).append(str(dest2))
+        if lc["fmt"] in ("vert", "both"):
+            base3 = f"{stem}_largo_p{part_num}s{seg_num}_seq_vert"
+            dest3 = unique_path(out_dir, base3, ".mp4")
+            if _long_cut_vert(src, dest3, start_abs, dur_s, job_id):
+                saved.append(str(dest3))
+                job.setdefault("_long_saved", []).append(str(dest3))
+
+    return saved
+
+def long_tick(job_id, lc, src, part_num, part_offset, sec_recorded):
+    """
+    Llamar al final de cada parte grabada.
+    Corta la parte en segmentos de long_min minutos y los guarda en segundo plano.
+    part_offset es el inicio absoluto de esta parte (segundos grabados antes).
+    sec_recorded es lo que duró esta parte.
+    """
+    if not lc:
+        return
+    job = JOBS.get(job_id, {})
+    unit = int(lc["min"] * LONG_UNIT)
+    if unit <= 0 or sec_recorded < 5:
+        return
+    # Dividir la parte en segmentos de unit segundos
+    segments = []
+    t = 0.0
+    seg_num = job.get("_long_seg_counter", 0)
+    while t + 5 < sec_recorded:
+        dur = min(unit, sec_recorded - t)
+        if dur >= unit * 0.25:   # descartar restos menores al 25% del tramo
+            segments.append((t, dur, seg_num + 1))
+            seg_num += 1
+        t += unit
+    job["_long_seg_counter"] = seg_num
+
+    if not segments:
+        return
+
+    def _worker():
+        job["_long_busy"] = job.get("_long_busy", 0) + 1
+        try:
+            for (seg_start, seg_dur, snum) in segments:
+                _long_save(job, src, lc, part_offset + seg_start, seg_dur, part_num, snum, job_id)
+        finally:
+            job["_long_busy"] = max(0, job.get("_long_busy", 1) - 1)
+
+    threading.Thread(target=_worker, daemon=True).start()
+
+def long_wait(job_id, timeout=300):
+    """Esperar a que todos los hilos long_* terminen antes de devolver record_live."""
+    job = JOBS.get(job_id, {})
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if not job.get("_long_busy", 0):
+            return
+        time.sleep(2)
+    # timeout: seguimos igualmente
+    job.setdefault("warnings", []).append(
+        "Los videos largos tardaron demasiado; algunos pueden estar incompletos.")
+
+
 def vod_dir():
     """Carpeta donde se guarda el directo completo: la de salida, o Videos/Clipper si no hay."""
     d = str(load_settings().get("out_dir") or "").strip()
@@ -2235,6 +2405,11 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     title = (str(meta.get("title") or "directo"))[:80]
     job.update(live=True, msg="Conectando con el directo...", pct=3)
     job["name"] = title + ".mp4"
+
+    # Configuración de videos largos (None = desactivado)
+    lc = long_cfg()
+    job["_long_seg_counter"] = 0
+    job["_long_busy"] = 0
 
     # Contexto compartido con _live_clipper.
     # "lock" protege las actualizaciones atomicas de out/part_offset al cambiar de parte.
@@ -2391,7 +2566,12 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
 
             # Acumular el tiempo grabado en esta parte
             sec_recorded = float(job.get("_rec_sec", 0) or 0)
+            part_offset_before = part_offset  # inicio absoluto de esta parte (antes de acumular)
             part_offset += sec_recorded
+
+            # Videos largos: cortar esta parte en segmentos de long_min minutos
+            if lc and sec_recorded > 30:
+                long_tick(job_id, lc, out, part_num, part_offset_before, sec_recorded)
 
             # Esperar a que _live_clipper termine la ronda final de esta parte (max 2 min)
             # part_ready se activa cuando el clipper termino de analizar o no habia nada
@@ -2502,6 +2682,15 @@ def record_live(job_id, meta, jdir, rng, live_opts=None):
     if not out_final.is_file() or out_final.stat().st_size < 10000:
         raise RuntimeError("No se pudo grabar el directo. " + " | ".join(list(tail)[-3:])[-300:])
     job["offset"] = 0
+
+    # Esperar a que los videos largos terminen de cortarse (máx 5 min)
+    if lc:
+        job.update(msg="Guardando videos largos...", pct=98)
+        long_wait(job_id, timeout=300)
+        saved = job.get("_long_saved") or []
+        if saved:
+            job.setdefault("warnings", []).append(
+                f"Videos largos guardados ({len(saved)}): {vod_dir()}")
 
     return out_final
 
