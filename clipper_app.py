@@ -1501,21 +1501,48 @@ def set_freellm(key, url=""):
 FREELLM_PROC = {"p": None, "log": ""}
 
 
+def freellm_bundled():
+    """FreeLLMAPI que viene con el instalador: app/ (ya con sus paquetes) y node/ (Node + npm), junto a Clipper.exe."""
+    base = Path(sys.executable).parent / "freellm"
+    node = base / "node" / ("node.exe" if IS_WIN else "node")
+    cli = base / "node" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    app = base / "app"
+    if node.is_file() and cli.is_file() and (app / "package.json").is_file():
+        return app, [str(node), str(cli)], str(node.parent)
+    return None
+
+
 def freellm_start(folder):
-    """Enciende FreeLLMAPI desde la carpeta que instalo la persona (npm run dev). (ok, mensaje)"""
+    """Enciende FreeLLMAPI (npm run dev). Sin carpeta usa el que trae el instalador. (ok, mensaje)"""
     folder = Path(str(folder or "").strip().strip('"'))
     if FREELLM_PROC["p"] and FREELLM_PROC["p"].poll() is None:
         return True, "FreeLLMAPI ya esta encendido."
+    bundled = freellm_bundled()
+    prefix, extra_path = None, None
+    if not str(folder) or str(folder) == ".":
+        if not bundled:
+            return False, "No hay FreeLLMAPI: elige la carpeta donde lo instalaste."
+        folder, prefix, extra_path = bundled
+    elif bundled and folder.resolve() == bundled[0].resolve():
+        folder, prefix, extra_path = bundled
     if not (folder / "package.json").is_file():
         return False, "No encuentro FreeLLMAPI en esa carpeta (falta package.json). Elige la carpeta freellmapi."
-    npm = shutil.which("npm")
-    if not npm:
-        return False, "Falta Node.js. Instalalo desde nodejs.org y reinicia Clipper."
+    if prefix is None:
+        npm = shutil.which("npm")
+        if not npm:
+            return False, "Falta Node.js. Instalalo desde nodejs.org y reinicia Clipper."
+        prefix = [npm]
+    env_file = folder / ".env"
+    if not env_file.exists():   # clave de cifrado propia de esta PC (no la misma para todos)
+        env_file.write_text(f"PORT=3001\nENCRYPTION_KEY={secrets.token_hex(32)}\n", encoding="utf-8")
+    env = dict(os.environ)
+    if extra_path:
+        env["PATH"] = extra_path + os.pathsep + env.get("PATH", "")
     try:
         log = open(DATA_DIR / "freellm.log", "w", encoding="utf-8")
-        FREELLM_PROC["p"] = subprocess.Popen([npm, "run", "dev"], cwd=str(folder), stdout=log, stderr=subprocess.STDOUT,
-                                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
-                                             shell=IS_WIN and npm.lower().endswith(".cmd"))
+        FREELLM_PROC["p"] = subprocess.Popen(prefix + ["run", "dev"], cwd=str(folder), stdout=log, stderr=subprocess.STDOUT,
+                                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, env=env,
+                                             shell=(not extra_path) and IS_WIN and prefix[0].lower().endswith(".cmd"))
     except OSError as e:
         return False, f"No se pudo encender: {str(e)[:120]}"
     for _ in range(40):   # espera a que conteste (hasta 20 s)
@@ -1541,6 +1568,7 @@ def freellm_stop():
 
 
 import atexit
+import secrets
 atexit.register(freellm_stop)
 
 

@@ -27,6 +27,7 @@ Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; Gr
 Source: "pack\Clipper.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "pack\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 Source: "pack\whisper\*"; DestDir: "{app}\whisper"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
+Source: "pack\freellm\*"; DestDir: "{app}\freellm"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist
 
 [Icons]
 Name: "{group}\Clipper"; Filename: "{app}\Clipper.exe"
