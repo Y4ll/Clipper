@@ -3349,179 +3349,6 @@ def watch_loop():
         time.sleep(20)
 
 
-# Licencia (opcional). Si LICENSE_URL esta vacio, la app no pide licencia (uso propio).
-# Al compilar una version para vender, se pone aqui la direccion del servidor de licencias.
-LICENSE_URL = ""
-LICENSE_FILE = DATA_DIR / "licencia.json"
-LICENSE_GRACE_DAYS = 14   # sin internet, la app sigue funcionando hasta 14 dias desde la ultima verificacion
-# Inicio de sesion con Google para la licencia. Se pone el ID de cliente de Google (tipo "App de escritorio").
-# Si queda vacio, la licencia no pide cuenta de Google (solo el codigo).
-GOOGLE_CLIENT_ID = ""
-GOOGLE_CLIENT_SECRET = ""   # Google lo pide en el canje del codigo; en apps de escritorio no es un secreto de verdad
-GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
-GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
-GLOGIN = {"status": "idle", "msg": "", "id_token": "", "email": ""}
-
-
-def _jwt_email(idt):
-    """Correo del id_token solo para mostrarlo. La confianza la decide el servidor de licencias."""
-    try:
-        part = idt.split(".")[1]
-        part += "=" * (-len(part) % 4)
-        return str(json.loads(base64.urlsafe_b64decode(part)).get("email", ""))
-    except Exception:  # noqa: BLE001
-        return ""
-
-
-def google_login_start():
-    """Abre la cuenta de Google en el navegador (PKCE + 127.0.0.1) y guarda el id_token."""
-    if not GOOGLE_CLIENT_ID:
-        raise ValueError("Esta version no pide cuenta de Google.")
-    verifier = secrets.token_urlsafe(48)
-    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
-    state = secrets.token_urlsafe(12)
-    result = {}
-
-    class CB(BaseHTTPRequestHandler):
-        def log_message(self, *a):
-            pass
-
-        def do_GET(self):
-            q = parse_qs(urlparse(self.path).query)
-            if q.get("state", [""])[0] == state and (q.get("code") or q.get("error")):
-                result.update(code=q.get("code", [""])[0], error=q.get("error", [""])[0])
-                text = "Listo. Ya puedes cerrar esta pestaña y volver a Clipper."
-            else:
-                text = "Respuesta no valida."
-            data = f"<meta charset='utf-8'><body style='font-family:sans-serif;background:#111;color:#fc0;padding:40px'>{text}".encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html; charset=utf-8")
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
-
-    srv = HTTPServer(("127.0.0.1", 0), CB)
-    srv.timeout = 5
-    redirect = f"http://127.0.0.1:{srv.server_address[1]}"
-    url = GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
-        "client_id": GOOGLE_CLIENT_ID, "redirect_uri": redirect, "response_type": "code",
-        "scope": "openid email", "prompt": "select_account", "state": state,
-        "code_challenge": challenge, "code_challenge_method": "S256"})
-    GLOGIN.update(status="waiting", msg="Elige tu cuenta de Google en el navegador...", id_token="", email="")
-
-    def wait():
-        end = time.time() + 300
-        try:
-            while not result and time.time() < end:
-                srv.handle_request()
-            if not result.get("code"):
-                GLOGIN.update(status="error", msg="No se confirmo la cuenta (o se acabo el tiempo).")
-                return
-            fields = {"code": result["code"], "client_id": GOOGLE_CLIENT_ID, "redirect_uri": redirect,
-                      "grant_type": "authorization_code", "code_verifier": verifier}
-            if GOOGLE_CLIENT_SECRET:
-                fields["client_secret"] = GOOGLE_CLIENT_SECRET
-            r = yt_post_form(GOOGLE_TOKEN_URL, fields)
-            idt = r.get("id_token", "")
-            if not idt:
-                raise RuntimeError("Google no devolvio la cuenta. Intenta otra vez.")
-            GLOGIN.update(status="ok", msg="Cuenta confirmada.", id_token=idt, email=_jwt_email(idt))
-        except Exception as e:  # noqa: BLE001
-            GLOGIN.update(status="error", msg=str(e)[:200])
-        finally:
-            srv.server_close()
-
-    threading.Thread(target=wait, daemon=True).start()
-    return url
-
-
-def machine_id():
-    """Identificador estable de esta PC (no es un dato personal: es un hash)."""
-    raw = ""
-    try:
-        if IS_WIN:
-            import winreg
-            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
-                raw = str(winreg.QueryValueEx(k, "MachineGuid")[0])
-    except Exception:  # noqa: BLE001
-        raw = ""
-    raw = raw or str(uuid.getnode())
-    return hashlib.sha256(("clipper|" + raw).encode()).hexdigest()
-
-
-def _lic_load():
-    try:
-        return json.loads(LICENSE_FILE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return {}
-
-
-def _lic_save(d):
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    LICENSE_FILE.write_text(json.dumps(d), encoding="utf-8")
-
-
-def lic_status():
-    """(ok, mensaje). Sin LICENSE_URL siempre ok."""
-    if not LICENSE_URL:
-        return True, ""
-    d = _lic_load()
-    if not d.get("token"):
-        return False, "Activa Clipper con tu codigo de compra."
-    if d.get("machine") != machine_id():
-        return False, "Esta licencia pertenece a otra PC."
-    age = time.time() - float(d.get("checked", 0))
-    try:
-        req = urllib.request.Request(LICENSE_URL.rstrip("/") + "/verificar", method="POST",
-                                     data=json.dumps({"token": d["token"]}).encode(),
-                                     headers={"Content-Type": "application/json", "User-Agent": "Clipper"})
-        with urllib.request.urlopen(req, timeout=10) as r:
-            ok = bool(json.load(r).get("ok"))
-        if ok:
-            d["checked"] = time.time()
-            _lic_save(d)
-            return True, ""
-        return False, "Tu licencia ya no es valida. Escribe a soporte."
-    except urllib.error.HTTPError:
-        return False, "Tu licencia ya no es valida. Escribe a soporte."
-    except Exception:  # noqa: BLE001
-        if age < LICENSE_GRACE_DAYS * 86400:
-            return True, "Sin internet: se usa la ultima verificacion."
-        return False, "Conecta a internet para verificar tu licencia."
-
-
-def lic_activate(codigo):
-    if not LICENSE_URL:
-        return True, "No hace falta licencia."
-    codigo = (codigo or "").strip().upper()
-    if not re.fullmatch(r"CLIP(-[A-F0-9]{4}){3}", codigo):
-        return False, "El codigo no tiene el formato correcto (CLIP-XXXX-XXXX-XXXX)."
-    body = {"codigo": codigo, "maquina": machine_id()}
-    if GOOGLE_CLIENT_ID:
-        if not GLOGIN.get("id_token"):
-            return False, "Primero inicia sesion con tu cuenta de Google."
-        body["id_token"] = GLOGIN["id_token"]
-    mid = body["maquina"]
-    try:
-        req = urllib.request.Request(LICENSE_URL.rstrip("/") + "/activar", method="POST",
-                                     data=json.dumps(body).encode(),
-                                     headers={"Content-Type": "application/json", "User-Agent": "Clipper"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            d = json.load(r)
-    except urllib.error.HTTPError as e:
-        try:
-            return False, json.load(e).get("msg", "No se pudo activar.")
-        except Exception:  # noqa: BLE001
-            return False, f"No se pudo activar (error {e.code})."
-    except Exception:  # noqa: BLE001
-        return False, "No hay conexion con el servidor de licencias."
-    if not d.get("ok") or not d.get("token"):
-        return False, d.get("msg", "No se pudo activar.")
-    _lic_save({"token": d["token"], "machine": mid, "checked": time.time(),
-               "email": GLOGIN.get("email", "")})
-    return True, "Clipper activado."
-
-
 def cleanup_all():
     """Al cerrar: borra los videos y clips temporales de esta sesion."""
     if not WORK.exists():
@@ -3555,25 +3382,6 @@ def _get_json(url, timeout=10):
 def check_update():
     """Mira si hay version nueva. Si tambien hay archivo de actualizacion ligero (~22 MB), lo guarda."""
     if BUILD == "dev":
-        UPDATE["state"] = "done"
-        return
-    if LICENSE_URL:   # version de venta: la actualizacion sale del servidor, solo con licencia valida
-        try:
-            tok = _lic_load().get("token", "")
-            if not tok or not lic_status()[0]:
-                UPDATE["state"] = "done"
-                return
-            base = LICENSE_URL.rstrip("/")
-            t = urllib.parse.quote(tok)
-            meta = _get_json(f"{base}/actualizacion/info?token={t}", 10)
-            sha = str(meta.get("version", ""))[:7]
-            if re.fullmatch(r"[0-9a-f]{7}", sha) and sha != BUILD[:7]:
-                UPDATE.update(available=True, version=sha, url=f"{base}/actualizacion/archivo?token={t}&cual=setup")
-                if re.fullmatch(r"[0-9a-f]{64}", str(meta.get("sha256", ""))):
-                    UPDATE.update(lite_url=f"{base}/actualizacion/archivo?token={t}&cual=lite",
-                                  lite_sha=meta["sha256"], lite_size=int(meta.get("size") or 0))
-        except Exception:  # noqa: BLE001
-            pass
         UPDATE["state"] = "done"
         return
     try:
@@ -3888,18 +3696,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        if u.path in ("/licencia/google/iniciar", "/licencia/google/estado"):
-            if not self._auth(q):
-                return
-            if u.path.endswith("/iniciar"):
-                try:
-                    webbrowser.open(google_login_start())
-                    return self._json({"ok": True})
-                except ValueError as e:
-                    return self._json({"ok": False, "msg": str(e)}, 400)
-            return self._json({"status": GLOGIN["status"], "msg": GLOGIN["msg"], "email": GLOGIN["email"]})
-        if LICENSE_URL and u.path not in ("/", "/caps", "/status", "/favicon.ico") and not lic_status()[0]:
-            return self._json({"error": "Activa Clipper con tu codigo de compra."}, 403)
         if u.path == "/":
             if not self._host_ok():
                 self.send_error(403)
@@ -3932,14 +3728,11 @@ class Handler(BaseHTTPRequestHandler):
             if job:
                 self._json(dict(job))
         elif u.path == "/caps":
-            lic_ok, lic_msg = lic_status()
             self._json({"build": BUILD, "whisper": find_whisper() is not None,
                         "ytdlp": importlib.util.find_spec("yt_dlp") is not None,
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
-                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key()),
-                        "licencia_ok": lic_ok, "licencia_msg": lic_msg,
-                        "licencia_google": bool(GOOGLE_CLIENT_ID)})
+                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
         elif u.path == "/report":
             self._json(day_report())
         elif u.path == "/hw":
@@ -3996,14 +3789,6 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
-        if u.path == "/licencia/activar":
-            if not self._auth(q):
-                return
-            body = self._body_json(2000) or {}
-            ok, msg = lic_activate(body.get("codigo", ""))
-            return self._json({"ok": ok, "msg": msg}, 200 if ok else 400)
-        if LICENSE_URL and u.path not in ("/status", "/caps") and not lic_status()[0]:
-            return self._json({"error": "Activa Clipper con tu codigo de compra."}, 403)
         if not self._auth(q):
             self.send_error(403)
             return
@@ -4187,20 +3972,6 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
-        elif u.path == "/keys/export":
-            # copia de tus claves de IA; el archivo es texto plano (avisado en la app)
-            self._json({"app": "Clipper", "version": 1, "gemini": get_gemini_key(), "groq": get_groq_key()})
-        elif u.path == "/keys/import":
-            body = self._body_json(20000) or {}
-            if body.get("app") != "Clipper":
-                self._json({"error": "Ese archivo no es una copia de claves de Clipper."}, 400)
-                return
-            bad = [name for name, fn in (("gemini", set_gemini_key), ("groq", set_groq_key))
-                   if str(body.get(name) or "").strip() and not fn(str(body.get(name)).strip())]
-            if bad:
-                self._json({"error": "Estas claves no se pudieron cargar: " + ", ".join(bad)}, 400)
-            else:
-                self._json({"ok": True})
         elif u.path == "/groqkey/test":
             body = self._body_json(2000) or {}
             ok, msg = groq_test(body.get("key") or None)
