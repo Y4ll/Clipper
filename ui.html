@@ -561,6 +561,8 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <div class="lbl" style="margin:10px 0 4px">🔑 Clave de Groq <span style="color:var(--muted);font-weight:400;font-size:12px">(gratis en console.groq.com/keys)</span></div>
       <div style="display:flex;gap:6px"><input type="password" id="qkey" placeholder="Pega tu clave de Groq aquí" autocomplete="off"><button class="btn sm" id="qsave">Guardar</button><button class="btn sm" id="qtest">Probar</button><button class="btn sm danger hidden" id="qdel">Quitar</button></div>
       <div class="note" id="qnote" style="margin-top:4px">Se usa Groq primero y Gemini de respaldo. Se guarda solo en tu PC.</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="kexp">Guardar copia de mis claves</button><button class="btn sm" id="kimp">Cargar copia</button><input type="file" id="kfile" accept=".json,application/json" class="hidden"></div>
+      <div class="note" id="knote" style="margin-top:4px">La copia guarda tus claves en un archivo de texto sin cifrar. Guárdala en un lugar seguro y no la compartas.</div>
     </div>
 
     <!-- VIDEO -->
@@ -858,6 +860,14 @@ $("#qsave").onclick=async()=>{const k=$("#qkey").value.trim();if(!k)return;const
 $("#qtest").onclick=async()=>{const b=$("#qtest"),n=$("#qnote");b.disabled=true;n.textContent="Probando la clave...";
   try{const k=$("#qkey").value.trim(),r=await post("/groqkey/test",{key:k});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;if(r.ok&&k){const s=await post("/groqkey",{key:k});if(!s.error){$("#qkey").value="";n.textContent+=" Clave guardada.";loadCaps()}}n.style.color=r.ok?"var(--green)":"var(--red)"}
   catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
+$("#kexp").onclick=async()=>{const n=$("#knote");try{const d=await(await API("/keys/export")).json();
+  const blob=new Blob([JSON.stringify(d,null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="clipper-claves.json";a.click();
+  n.textContent="Copia creada: clipper-claves.json. Guárdala en un lugar seguro.";n.style.color="var(--green)"}catch(e){n.textContent="✗ No se pudo crear la copia.";n.style.color="var(--red)"}};
+$("#kimp").onclick=()=>$("#kfile").click();
+$("#kfile").onchange=async()=>{const f=$("#kfile").files[0];if(!f)return;const n=$("#knote");
+  try{const d=JSON.parse(await f.text());const r=await post("/keys/import",d);
+    if(r.error){n.textContent="✗ "+r.error;n.style.color="var(--red)"}else{n.textContent="✓ Claves cargadas.";n.style.color="var(--green)";loadCaps()}}
+  catch(e){n.textContent="✗ Ese archivo no sirve.";n.style.color="var(--red)"}$("#kfile").value=""};
 $("#qdel").onclick=async()=>{await post("/groqkey",{key:""});loadCaps()};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};
 /* ---------- actualizaciones ---------- */

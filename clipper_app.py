@@ -3972,6 +3972,20 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
+        elif u.path == "/keys/export":
+            # copia de tus claves de IA; el archivo es texto plano (avisado en la app)
+            self._json({"app": "Clipper", "version": 1, "gemini": get_gemini_key(), "groq": get_groq_key()})
+        elif u.path == "/keys/import":
+            body = self._body_json(20000) or {}
+            if body.get("app") != "Clipper":
+                self._json({"error": "Ese archivo no es una copia de claves de Clipper."}, 400)
+                return
+            bad = [name for name, fn in (("gemini", set_gemini_key), ("groq", set_groq_key))
+                   if str(body.get(name) or "").strip() and not fn(str(body.get(name)).strip())]
+            if bad:
+                self._json({"error": "Estas claves no se pudieron cargar: " + ", ".join(bad)}, 400)
+            else:
+                self._json({"ok": True})
         elif u.path == "/groqkey/test":
             body = self._body_json(2000) or {}
             ok, msg = groq_test(body.get("key") or None)
