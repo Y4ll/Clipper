@@ -3349,6 +3349,94 @@ def watch_loop():
         time.sleep(20)
 
 
+# Licencia (opcional). Si LICENSE_URL esta vacio, la app no pide licencia (uso propio).
+# Al compilar una version para vender, se pone aqui la direccion del servidor de licencias.
+LICENSE_URL = ""
+LICENSE_FILE = DATA_DIR / "licencia.json"
+LICENSE_GRACE_DAYS = 14   # sin internet, la app sigue funcionando hasta 14 dias desde la ultima verificacion
+
+
+def machine_id():
+    """Identificador estable de esta PC (no es un dato personal: es un hash)."""
+    raw = ""
+    try:
+        if IS_WIN:
+            import winreg
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Cryptography") as k:
+                raw = str(winreg.QueryValueEx(k, "MachineGuid")[0])
+    except Exception:  # noqa: BLE001
+        raw = ""
+    raw = raw or str(uuid.getnode())
+    return hashlib.sha256(("clipper|" + raw).encode()).hexdigest()
+
+
+def _lic_load():
+    try:
+        return json.loads(LICENSE_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+
+
+def _lic_save(d):
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    LICENSE_FILE.write_text(json.dumps(d), encoding="utf-8")
+
+
+def lic_status():
+    """(ok, mensaje). Sin LICENSE_URL siempre ok."""
+    if not LICENSE_URL:
+        return True, ""
+    d = _lic_load()
+    if not d.get("token"):
+        return False, "Activa Clipper con tu codigo de compra."
+    if d.get("machine") != machine_id():
+        return False, "Esta licencia pertenece a otra PC."
+    age = time.time() - float(d.get("checked", 0))
+    try:
+        req = urllib.request.Request(LICENSE_URL.rstrip("/") + "/verificar", method="POST",
+                                     data=json.dumps({"token": d["token"]}).encode(),
+                                     headers={"Content-Type": "application/json", "User-Agent": "Clipper"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            ok = bool(json.load(r).get("ok"))
+        if ok:
+            d["checked"] = time.time()
+            _lic_save(d)
+            return True, ""
+        return False, "Tu licencia ya no es valida. Escribe a soporte."
+    except urllib.error.HTTPError:
+        return False, "Tu licencia ya no es valida. Escribe a soporte."
+    except Exception:  # noqa: BLE001
+        if age < LICENSE_GRACE_DAYS * 86400:
+            return True, "Sin internet: se usa la ultima verificacion."
+        return False, "Conecta a internet para verificar tu licencia."
+
+
+def lic_activate(codigo):
+    if not LICENSE_URL:
+        return True, "No hace falta licencia."
+    codigo = (codigo or "").strip().upper()
+    if not re.fullmatch(r"CLIP(-[A-F0-9]{4}){3}", codigo):
+        return False, "El codigo no tiene el formato correcto (CLIP-XXXX-XXXX-XXXX)."
+    mid = machine_id()
+    try:
+        req = urllib.request.Request(LICENSE_URL.rstrip("/") + "/activar", method="POST",
+                                     data=json.dumps({"codigo": codigo, "maquina": mid}).encode(),
+                                     headers={"Content-Type": "application/json", "User-Agent": "Clipper"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            d = json.load(r)
+    except urllib.error.HTTPError as e:
+        try:
+            return False, json.load(e).get("msg", "No se pudo activar.")
+        except Exception:  # noqa: BLE001
+            return False, f"No se pudo activar (error {e.code})."
+    except Exception:  # noqa: BLE001
+        return False, "No hay conexion con el servidor de licencias."
+    if not d.get("ok") or not d.get("token"):
+        return False, d.get("msg", "No se pudo activar.")
+    _lic_save({"token": d["token"], "machine": mid, "checked": time.time()})
+    return True, "Clipper activado."
+
+
 def cleanup_all():
     """Al cerrar: borra los videos y clips temporales de esta sesion."""
     if not WORK.exists():
@@ -3696,6 +3784,8 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if LICENSE_URL and u.path not in ("/", "/caps", "/status", "/favicon.ico") and not lic_status()[0]:
+            return self._json({"error": "Activa Clipper con tu codigo de compra."}, 403)
         if u.path == "/":
             if not self._host_ok():
                 self.send_error(403)
@@ -3728,11 +3818,13 @@ class Handler(BaseHTTPRequestHandler):
             if job:
                 self._json(dict(job))
         elif u.path == "/caps":
+            lic_ok, lic_msg = lic_status()
             self._json({"build": BUILD, "whisper": find_whisper() is not None,
                         "ytdlp": importlib.util.find_spec("yt_dlp") is not None,
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
-                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
+                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key()),
+                        "licencia_ok": lic_ok, "licencia_msg": lic_msg})
         elif u.path == "/report":
             self._json(day_report())
         elif u.path == "/hw":
@@ -3789,6 +3881,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if u.path == "/licencia/activar":
+            if not self._auth(q):
+                return
+            body = self._body_json(2000) or {}
+            ok, msg = lic_activate(body.get("codigo", ""))
+            return self._json({"ok": ok, "msg": msg}, 200 if ok else 400)
+        if LICENSE_URL and u.path not in ("/status", "/caps") and not lic_status()[0]:
+            return self._json({"error": "Activa Clipper con tu codigo de compra."}, 403)
         if not self._auth(q):
             self.send_error(403)
             return
