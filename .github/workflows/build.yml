@@ -111,26 +111,6 @@ jobs:
             output/Clipper-update.exe
             output/update.json
 
-      - name: Publicar Release
-        shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          function Publicar($tag, $titulo, $notas, $archivos, $extra) {
-            gh release delete $tag --cleanup-tag -y --repo ${{ github.repository }}
-            $global:LASTEXITCODE = 0
-            for ($i = 1; $i -le 5; $i++) {
-              gh release create $tag @archivos --repo ${{ github.repository }} --target ${{ github.sha }} --title $titulo --notes $notas @extra
-              if ($LASTEXITCODE -eq 0) { return }
-              Write-Host "intento $i fallo al crear $tag; reintento"
-              Start-Sleep -Seconds (10 * $i)
-              $global:LASTEXITCODE = 0
-            }
-            throw "No se pudo crear el Release $tag"
-          }
-          Publicar "latest" "Clipper para Windows" "Descarga e instala ClipperSetup.exe. Despues Clipper se actualiza solo." @("output/ClipperSetup.exe", "Clipper-Windows.zip") @()
-          # archivos que usa la propia app para actualizarse (no hace falta bajarlos)
-          try {
-            Publicar "updates" "Archivos internos de actualizacion" "No descargar: los usa Clipper para actualizarse solo." @("output/Clipper-update.exe", "output/update.json") @("--prerelease")
-          } catch { Write-Host "AVISO: no se publico la actualizacion ligera: $_" }
-          $global:LASTEXITCODE = 0
+      # La publicacion en Releases publicos se quito a proposito: el instalador y la actualizacion
+      # ahora salen del servidor de licencias (paso de subida pendiente). Los archivos quedan en
+      # la pestana Actions > este build > Artifacts, solo para el dueno del repositorio.

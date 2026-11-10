@@ -3472,6 +3472,25 @@ def check_update():
     if BUILD == "dev":
         UPDATE["state"] = "done"
         return
+    if LICENSE_URL:   # version de venta: la actualizacion sale del servidor, solo con licencia valida
+        try:
+            tok = _lic_load().get("token", "")
+            if not tok or not lic_status()[0]:
+                UPDATE["state"] = "done"
+                return
+            base = LICENSE_URL.rstrip("/")
+            t = urllib.parse.quote(tok)
+            meta = _get_json(f"{base}/actualizacion/info?token={t}", 10)
+            sha = str(meta.get("version", ""))[:7]
+            if re.fullmatch(r"[0-9a-f]{7}", sha) and sha != BUILD[:7]:
+                UPDATE.update(available=True, version=sha, url=f"{base}/actualizacion/archivo?token={t}&cual=setup")
+                if re.fullmatch(r"[0-9a-f]{64}", str(meta.get("sha256", ""))):
+                    UPDATE.update(lite_url=f"{base}/actualizacion/archivo?token={t}&cual=lite",
+                                  lite_sha=meta["sha256"], lite_size=int(meta.get("size") or 0))
+        except Exception:  # noqa: BLE001
+            pass
+        UPDATE["state"] = "done"
+        return
     try:
         data = _get_json(UPDATE_API, 8)
         sha = str(data.get("target_commitish", ""))[:7]
