@@ -508,6 +508,20 @@ input[type=range]{accent-color:var(--yellow);width:100%}
         <div class="fld"><label for="schedule_gap">Cada (min):</label><input type="number" id="schedule_gap" min="5" max="1440" step="5" value="60"></div>
       </div>
     </div>
+    <details class="more" id="ytMore" open><summary>Opciones de subida</summary>
+      <div class="yt" style="margin-top:8px">
+        <div>
+          <div class="fld"><label for="yt_category">Categoría:</label><select id="yt_category"><option value="22">Gente y blogs</option><option value="20">Juegos</option><option value="24">Entretenimiento</option><option value="23">Comedia</option><option value="17">Deportes</option><option value="10">Música</option><option value="25">Noticias</option><option value="28">Ciencia y tecnología</option><option value="27">Educación</option></select></div>
+          <div class="fld"><label for="yt_max">Máx. por día:</label><input type="number" id="yt_max" min="1" max="10" step="1" value="10"></div>
+          <div class="fld"><label for="yt_tags">Etiquetas:</label><input type="text" id="yt_tags" maxlength="200" placeholder="gaming, clips, directo" autocomplete="off"></div>
+        </div>
+        <div>
+          <label class="ck"><input type="checkbox" id="yt_shorts" checked><span>Añadir #Shorts<small>Pone #Shorts al título y la descripción</small></span></label>
+          <label class="ck"><input type="checkbox" id="yt_notify"><span>Avisar a suscriptores<small>Notifica cada subida. Apagado es más discreto</small></span></label>
+        </div>
+      </div>
+      <div class="fld" style="grid-template-columns:1fr"><label for="yt_desc">Descripción fija (se añade a todos los clips):</label><textarea id="yt_desc" rows="3" maxlength="1500" placeholder="Directo completo en… Sígueme en…" style="width:100%"></textarea></div>
+    </details>
     <p class="note" id="ytMsg"></p>
     <details class="more"><summary>Cómo configurarlo</summary>
       <p class="note" style="margin:0 0 6px">Usa la API oficial de Google con tu cuenta. Una sola vez: en console.cloud.google.com crea un proyecto, activa «YouTube Data API v3» y crea una credencial «ID de cliente de OAuth» tipo <b>App de escritorio</b>; pega aquí el ID y el secreto. Empieza en «Privado» para probar.</p>
@@ -618,7 +632,7 @@ function chips(id,key,cb){
 function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
-  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;
+  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;$("#yt_category").value=S.yt_category||"22";$("#yt_max").value=S.yt_max||10;$("#yt_tags").value=S.yt_tags||"";$("#yt_desc").value=S.yt_desc||"";$("#yt_shorts").checked=S.yt_shorts!==false;$("#yt_notify").checked=!!S.yt_notify;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#live_clip_len").value=String([20,30,45,60].includes(S.live_clip_len)?S.live_clip_len:30);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   $("#long_on").checked=!!S.long_on;$("#longBox").style.display=S.long_on?"":"none";
   $("#long_min").value=String([20,30,60].includes(S.long_min)?S.long_min:30);
@@ -758,6 +772,10 @@ $("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#voc
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
 $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
+$("#yt_category").onchange=e=>{S.yt_category=e.target.value;persist()};
+$("#yt_max").onchange=e=>{S.yt_max=Math.max(1,Math.min(10,+e.target.value||10));e.target.value=S.yt_max;persist()};
+$("#yt_tags").oninput=e=>{S.yt_tags=e.target.value;persist()};$("#yt_desc").oninput=e=>{S.yt_desc=e.target.value;persist()};
+$("#yt_shorts").onchange=e=>{S.yt_shorts=e.target.checked;persist()};$("#yt_notify").onchange=e=>{S.yt_notify=e.target.checked;persist()};
 /* ---------- monitor de directos ---------- */
 const MON_SEEN=new Set();
 async function loadMonitor(){

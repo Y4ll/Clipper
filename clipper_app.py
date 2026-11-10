@@ -144,7 +144,7 @@ FONT_CANDIDATES = [
 SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
-                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len",
+                "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len", "yt_category", "yt_shorts", "yt_desc", "yt_tags", "yt_notify", "yt_max",
                 "long_on", "long_min", "long_mode", "long_fmt"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
@@ -308,6 +308,7 @@ YT_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 YT_TOKEN_URL = "https://oauth2.googleapis.com/token"
 YT_UPLOAD_URL = "https://www.googleapis.com/upload/youtube/v3/videos"
 YT_SCOPE = "https://www.googleapis.com/auth/youtube.upload"
+YT_CATEGORIES = {"22", "20", "24", "23", "17", "10", "25", "28", "27"}   # ids oficiales de YouTube
 YT_MAX_PER_DAY = 10        # tope propio: evita spam y que te marquen la cuenta
 YT_AUTH = {"status": "idle", "msg": ""}
 YT_TOKEN = {"value": "", "exp": 0.0}
@@ -455,17 +456,17 @@ def next_publish_slot(platform="yt"):
     return datetime.datetime.fromtimestamp(t, datetime.timezone.utc)
 
 
-def yt_upload_file(path, title, desc, tags, privacy, publish_at=None):
+def yt_upload_file(path, title, desc, tags, privacy, publish_at=None, category="22", notify=False):
     tok = yt_access_token()
     meta = {"snippet": {"title": title[:100], "description": desc[:4900], "tags": tags[:10],
-                        "categoryId": "22"},
+                        "categoryId": category if category in YT_CATEGORIES else "22"},
             "status": {"privacyStatus": privacy, "selfDeclaredMadeForKids": False}}
     if publish_at:   # YouTube exige "private" y publica solo a esa hora
         meta["status"]["privacyStatus"] = "private"
         meta["status"]["publishAt"] = publish_at.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     size = Path(path).stat().st_size
     init = urllib.request.Request(
-        YT_UPLOAD_URL + "?uploadType=resumable&part=snippet,status",
+        YT_UPLOAD_URL + "?uploadType=resumable&part=snippet,status&notifySubscribers=" + ("true" if notify else "false"),
         data=json.dumps(meta).encode("utf-8"), method="POST",
         headers={"Authorization": "Bearer " + tok, "Content-Type": "application/json; charset=UTF-8",
                  "X-Upload-Content-Type": "video/mp4", "X-Upload-Content-Length": str(size)})
@@ -489,23 +490,36 @@ def yt_upload_clips(job_id, clips, privacy):
     """Sube los clips terminados de un lote, de uno en uno, con tope diario propio."""
     job, jdir = JOBS[job_id], WORK / job_id
     privacy = privacy if privacy in ("private", "unlisted", "public") else "private"
+    st = load_settings()
+    category = str(st.get("yt_category") or "22")
+    shorts = st.get("yt_shorts", True) is not False
+    notify = bool(st.get("yt_notify"))
+    fixed_desc = str(st.get("yt_desc") or "").strip()[:1500]
+    extra_tags = [t.strip("# ") for t in str(st.get("yt_tags") or "").replace(",", " ").split() if t.strip("# ")][:6]
+    try:
+        max_day = max(1, min(YT_MAX_PER_DAY, int(st.get("yt_max") or YT_MAX_PER_DAY)))
+    except (TypeError, ValueError):
+        max_day = YT_MAX_PER_DAY
     for n, c in enumerate(clips, 1):
         with YT_LOCK:
             now = time.time()
             YT_SENT[:] = [t for t in YT_SENT if now - t < 86400]
-            if len(YT_SENT) >= YT_MAX_PER_DAY:
-                job["warnings"].append(f"YouTube: tope de {YT_MAX_PER_DAY} subidas por dia; este clip no se subio.")
+            if len(YT_SENT) >= max_day:
+                job["warnings"].append(f"YouTube: tope de {max_day} subidas por dia; este clip no se subio.")
                 continue
             f = jdir / c["name"]
-            title = (str(c.get("title") or "").strip() or f"{str(job.get('name') or 'Clip')[:70]} ({n})") + " #Shorts"
+            title = (str(c.get("title") or "").strip() or f"{str(job.get('name') or 'Clip')[:70]} ({n})")
+            if shorts:
+                title = title[:91] + " #Shorts"
             tags = c.get("tags") or []
             tags = [t.strip("# ") for t in (tags.split() if isinstance(tags, str) else tags)
                     if isinstance(t, str) and t.strip("# ")]
-            desc = (str(c.get("desc") or "").strip() + "\n\n#Shorts " +
-                    " ".join("#" + t for t in tags[:3])).strip()
+            tags = (tags + [t for t in extra_tags if t not in tags])[:10]
+            desc = (str(c.get("desc") or "").strip() + ("\n\n" + fixed_desc if fixed_desc else "") + "\n\n" +
+                    ("#Shorts " if shorts else "") + " ".join("#" + t for t in tags[:3])).strip()
             try:
                 when = next_publish_slot()
-                vid = yt_upload_file(f, title, desc, tags, privacy, when)
+                vid = yt_upload_file(f, title, desc, tags, privacy, when, category, notify)
                 YT_SENT.append(time.time())
                 if when:
                     job["warnings"].append("Programado en YouTube para " + when.astimezone().strftime("%d/%m %H:%M")
@@ -1799,7 +1813,7 @@ def save_settings(data):
 
 # ---------------------------------------------------------------- plantillas
 TEMPLATES_FILE = DATA_DIR / "templates.json"
-TEMPLATE_SKIP = {"schedule_on", "schedule_at", "schedule_gap", "texts", "intro_seen", "out_dir", "yt_auto", "yt_privacy", "fps30"}   # no son de estilo: no se guardan
+TEMPLATE_SKIP = {"schedule_on", "schedule_at", "schedule_gap", "texts", "intro_seen", "out_dir", "yt_auto", "yt_privacy", "yt_category", "yt_shorts", "yt_desc", "yt_tags", "yt_notify", "yt_max", "fps30"}   # no son de estilo: no se guardan
 MAX_TEMPLATES = 30
 
 
