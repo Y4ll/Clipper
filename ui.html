@@ -565,6 +565,10 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <input type="text" id="furl" placeholder="http://localhost:3001/v1" autocomplete="off" style="width:100%;margin-bottom:6px">
       <div style="display:flex;gap:6px"><input type="password" id="fkey" placeholder="Pega tu clave de FreeLLMAPI aquí" autocomplete="off"><button class="btn sm" id="fsave">Guardar</button><button class="btn sm" id="ftest">Probar</button><button class="btn sm danger hidden" id="fdel">Quitar</button></div>
       <div class="note" id="fnote" style="margin-top:4px">Se usa al final, si Gemini y Groq no responden (o si es lo único que tienes). Tiene que estar encendido en tu PC.</div>
+      <div class="lbl" style="margin:10px 0 4px">▶ Encender FreeLLMAPI desde Clipper</div>
+      <input type="text" id="fdir" placeholder="C:\\Users\\tu\\freellmapi" autocomplete="off" style="width:100%;margin-bottom:6px">
+      <div style="display:flex;gap:6px"><button class="btn sm" id="fstart">Encender</button><button class="btn sm danger" id="fstop">Apagar</button></div>
+      <div class="note" id="fstartNote" style="margin-top:4px">Necesita Node.js. Se apaga solo al cerrar Clipper.</div>
       <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="kexp">Guardar copia de mis claves</button><button class="btn sm" id="kimp">Cargar copia</button><input type="file" id="kfile" accept=".json,application/json" class="hidden"></div>
       <div class="note" id="knote" style="margin-top:4px">La copia guarda tus claves en un archivo de texto. Guárdala en un lugar seguro y no la compartas.</div>
     </div>
@@ -638,7 +642,7 @@ function chips(id,key,cb){
 function paint(){
   for(const [id,key] of [["preset","preset"],["mode","mode"],["text_pos","text_pos"],["text_color","text_color"],["text_size","text_size"],["sub_lang","sub_lang"],["logo_pos","logo_pos"],["fps","fps"],["quality","quality"],["cam_corner","cam_corner"],["sub_style","sub_style"],["ai_tone","ai_tone"],["res","res"]])
     {const el=$("#"+id);if(el.tagName==="SELECT")el.value=String(S[key]);else el.querySelectorAll(".chip").forEach(b=>b.classList.toggle("on",String(S[key])===b.dataset.v))}
-  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;$("#yt_category").value=S.yt_category||"22";$("#yt_max").value=S.yt_max||10;$("#yt_tags").value=S.yt_tags||"";$("#yt_desc").value=S.yt_desc||"";$("#yt_shorts").checked=S.yt_shorts!==false;$("#yt_notify").checked=!!S.yt_notify;
+  $("#schedule_at").value=S.schedule_at||"";$("#cta_text").value=S.cta_text||"";$("#vocab").value=S.vocab||"";$("#watch_dir").value=S.watch_dir||"";$("#fdir").value=S.freellm_dir||"";$("#handle_text").value=S.handle_text||"";$("#schedule_gap").value=S.schedule_gap||60;$("#yt_category").value=S.yt_category||"22";$("#yt_max").value=S.yt_max||10;$("#yt_tags").value=S.yt_tags||"";$("#yt_desc").value=S.yt_desc||"";$("#yt_shorts").checked=S.yt_shorts!==false;$("#yt_notify").checked=!!S.yt_notify;
   $("#clip_every_min").value=String([3,15,30].includes(S.clip_every_min)?S.clip_every_min:15);$("#live_clip_len").value=String([20,30,45,60].includes(S.live_clip_len)?S.live_clip_len:30);$("#n").value=S.n;$("#nv").textContent=S.n;$("#len").value=S.len;$("#lv").textContent=S.len;
   $("#long_on").checked=!!S.long_on;$("#longBox").style.display=S.long_on?"":"none";
   $("#long_min").value=String([20,30,60].includes(S.long_min)?S.long_min:30);
@@ -774,7 +778,7 @@ $("#long_on").onchange=e=>{S.long_on=e.target.checked;$("#longBox").style.displa
 $("#long_min").onchange=e=>{S.long_min=Number(e.target.value)||30;longNote();persist()};
 $("#long_mode").onchange=e=>{S.long_mode=e.target.value;persist()};
 $("#long_fmt").onchange=e=>{S.long_fmt=e.target.value;longNote();persist()};
-$("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
+$("#fdir").oninput=e=>{S.freellm_dir=e.target.value.trim();persist()};$("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
 $("#yt_privacy").onchange=e=>{S.yt_privacy=e.target.value;persist()};
@@ -877,6 +881,8 @@ $("#kfile").onchange=async()=>{const f=$("#kfile").files[0];if(!f)return;const n
   try{const d=JSON.parse(await f.text());const r=await post("/keys/import",d);
     if(r.error){n.textContent="✗ "+r.error;n.style.color="var(--red)"}else{n.textContent="✓ Claves cargadas.";n.style.color="var(--green)";loadCaps()}}
   catch(e){n.textContent="✗ Ese archivo no sirve.";n.style.color="var(--red)"}$("#kfile").value=""};
+$("#fstart").onclick=async()=>{const n=$("#fstartNote");n.textContent="Encendiendo...";const r=await post("/freellm/start",{folder:$("#fdir").value.trim()});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;n.style.color=r.ok?"var(--green)":"var(--red)"};
+$("#fstop").onclick=async()=>{const r=await post("/freellm/stop",{});$("#fstartNote").textContent=r.msg};
 $("#fdel").onclick=async()=>{await post("/freellm",{key:"",url:""});$("#furl").value="";loadCaps()};
 $("#qdel").onclick=async()=>{await post("/groqkey",{key:""});loadCaps()};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};

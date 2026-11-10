@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"freellm_dir", "skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len", "yt_category", "yt_shorts", "yt_desc", "yt_tags", "yt_notify", "yt_max",
@@ -1496,6 +1496,52 @@ def set_freellm(key, url=""):
     if url:
         FREELLM_URL_FILE.write_text(url, encoding="utf-8")
     return True
+
+
+FREELLM_PROC = {"p": None, "log": ""}
+
+
+def freellm_start(folder):
+    """Enciende FreeLLMAPI desde la carpeta que instalo la persona (npm run dev). (ok, mensaje)"""
+    folder = Path(str(folder or "").strip().strip('"'))
+    if FREELLM_PROC["p"] and FREELLM_PROC["p"].poll() is None:
+        return True, "FreeLLMAPI ya esta encendido."
+    if not (folder / "package.json").is_file():
+        return False, "No encuentro FreeLLMAPI en esa carpeta (falta package.json). Elige la carpeta freellmapi."
+    npm = shutil.which("npm")
+    if not npm:
+        return False, "Falta Node.js. Instalalo desde nodejs.org y reinicia Clipper."
+    try:
+        log = open(DATA_DIR / "freellm.log", "w", encoding="utf-8")
+        FREELLM_PROC["p"] = subprocess.Popen([npm, "run", "dev"], cwd=str(folder), stdout=log, stderr=subprocess.STDOUT,
+                                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW,
+                                             shell=IS_WIN and npm.lower().endswith(".cmd"))
+    except OSError as e:
+        return False, f"No se pudo encender: {str(e)[:120]}"
+    for _ in range(40):   # espera a que conteste (hasta 20 s)
+        time.sleep(0.5)
+        if FREELLM_PROC["p"].poll() is not None:
+            return False, "FreeLLMAPI se cerro al iniciar. Revisa freellm.log en la carpeta de datos de Clipper."
+        ok, _m = freellm_test(get_freellm_key() or "x", get_freellm_url())
+        if ok or "rechazo" in _m:
+            return True, "FreeLLMAPI encendido."
+    return True, "Encendido, pero todavia no responde. Espera un poco y pulsa Probar."
+
+
+def freellm_stop():
+    p = FREELLM_PROC["p"]
+    if p and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            p.kill()
+    FREELLM_PROC["p"] = None
+    return True, "FreeLLMAPI apagado."
+
+
+import atexit
+atexit.register(freellm_stop)
 
 
 def freellm_test(key=None, url=None):
@@ -4073,6 +4119,15 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
+        elif u.path == "/freellm/start":
+            body = self._body_json(2000) or {}
+            ok, msg = freellm_start(body.get("folder", ""))
+            if ok and body.get("folder"):
+                st = load_settings(); st["freellm_dir"] = str(body.get("folder")).strip(); save_settings(st)
+            self._json({"ok": ok, "msg": msg})
+        elif u.path == "/freellm/stop":
+            ok, msg = freellm_stop()
+            self._json({"ok": ok, "msg": msg})
         elif u.path == "/freellm/test":
             body = self._body_json(2000) or {}
             ok, msg = freellm_test(body.get("key") or None, body.get("url") or None)
