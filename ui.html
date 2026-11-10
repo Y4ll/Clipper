@@ -259,7 +259,9 @@ input[type=range]{accent-color:var(--yellow);width:100%}
   <div style="background:var(--panel,#15151c);border:1px solid var(--yellow,#F5C400);border-radius:14px;padding:22px;max-width:380px;width:100%">
     <div style="font-weight:800;font-size:18px;margin-bottom:6px">Activa Clipper</div>
     <div class="note" style="margin-bottom:10px">Pega el código que recibiste al comprar (CLIP-XXXX-XXXX-XXXX). Se usa una sola vez en esta PC.</div>
-    <input type="text" id="licCode" placeholder="CLIP-XXXX-XXXX-XXXX" autocomplete="off" style="width:100%;margin-bottom:8px;text-transform:uppercase">
+    <button class="btn" id="licGoogle" style="width:100%;margin-bottom:8px">1. Iniciar sesión con Google</button>
+    <div class="note" id="licGMsg" style="margin-bottom:8px"></div>
+    <input type="text" id="licCode" placeholder="2. CLIP-XXXX-XXXX-XXXX" autocomplete="off" style="width:100%;margin-bottom:8px;text-transform:uppercase">
     <button class="btn" id="licBtn" style="width:100%">Activar</button>
     <div class="note" id="licMsg" style="margin-top:8px"></div>
   </div>
@@ -726,7 +728,17 @@ async function loadReport(){
   if(!d.count){$("#repBox").textContent="Hoy todavía no has guardado clips.";return}
   $("#repBox").innerHTML="Clips de hoy: <b>"+d.count+"</b> ("+Math.round(d.seconds/60)+" min) · nota media <b>"+d.avg+"</b><br>"+d.best.map(b=>"🔥 "+b.points+" · "+esc(b.title)).join("<br>");
 }
-function showLic(c){const box=$("#licBox");if(c.licencia_ok===false){box.classList.remove("hidden");$("#licMsg").textContent=c.licencia_msg||""}else box.classList.add("hidden")}
+function showLic(c){const box=$("#licBox");if(c.licencia_ok===false){box.classList.remove("hidden");$("#licMsg").textContent=c.licencia_msg||"";$("#licGoogle").classList.toggle("hidden",!c.licencia_google)}else box.classList.add("hidden")}
+async function licGPoll(){
+  let d;try{d=await(await API("/licencia/google/estado")).json()}catch(e){return}
+  const m=$("#licGMsg");m.textContent=d.msg||"";m.style.color="";
+  if(d.status==="waiting"){setTimeout(licGPoll,1500);return}
+  if(d.status==="ok"){m.textContent="✓ Cuenta: "+(d.email||"confirmada");m.style.color="var(--green)";$("#licGoogle").textContent="✓ Cuenta de Google lista"}
+  else{m.style.color="var(--red)";$("#licGoogle").disabled=false}
+}
+$("#licGoogle").onclick=async()=>{const b=$("#licGoogle");b.disabled=true;$("#licGMsg").textContent="Abriendo Google en tu navegador...";
+  try{const r=await(await API("/licencia/google/iniciar")).json();if(!r.ok)throw new Error(r.msg||"No se pudo abrir Google.");setTimeout(licGPoll,800)}
+  catch(e){$("#licGMsg").textContent="✗ "+e.message;$("#licGMsg").style.color="var(--red)";b.disabled=false}};
 $("#licBtn").onclick=async()=>{const b=$("#licBtn"),m=$("#licMsg");b.disabled=true;m.textContent="Activando...";
   try{const r=await post("/licencia/activar",{codigo:$("#licCode").value.trim()});m.textContent=(r.ok?"✓ ":"✗ ")+(r.msg||r.error||"");m.style.color=r.ok?"var(--green)":"var(--red)";if(r.ok)setTimeout(()=>location.reload(),800)}
   catch(e){m.textContent="✗ No se pudo activar."}b.disabled=false};

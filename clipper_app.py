@@ -3354,6 +3354,85 @@ def watch_loop():
 LICENSE_URL = ""
 LICENSE_FILE = DATA_DIR / "licencia.json"
 LICENSE_GRACE_DAYS = 14   # sin internet, la app sigue funcionando hasta 14 dias desde la ultima verificacion
+# Inicio de sesion con Google para la licencia. Se pone el ID de cliente de Google (tipo "App de escritorio").
+# Si queda vacio, la licencia no pide cuenta de Google (solo el codigo).
+GOOGLE_CLIENT_ID = ""
+GOOGLE_CLIENT_SECRET = ""   # Google lo pide en el canje del codigo; en apps de escritorio no es un secreto de verdad
+GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GLOGIN = {"status": "idle", "msg": "", "id_token": "", "email": ""}
+
+
+def _jwt_email(idt):
+    """Correo del id_token solo para mostrarlo. La confianza la decide el servidor de licencias."""
+    try:
+        part = idt.split(".")[1]
+        part += "=" * (-len(part) % 4)
+        return str(json.loads(base64.urlsafe_b64decode(part)).get("email", ""))
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def google_login_start():
+    """Abre la cuenta de Google en el navegador (PKCE + 127.0.0.1) y guarda el id_token."""
+    if not GOOGLE_CLIENT_ID:
+        raise ValueError("Esta version no pide cuenta de Google.")
+    verifier = secrets.token_urlsafe(48)
+    challenge = base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
+    state = secrets.token_urlsafe(12)
+    result = {}
+
+    class CB(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_GET(self):
+            q = parse_qs(urlparse(self.path).query)
+            if q.get("state", [""])[0] == state and (q.get("code") or q.get("error")):
+                result.update(code=q.get("code", [""])[0], error=q.get("error", [""])[0])
+                text = "Listo. Ya puedes cerrar esta pestaña y volver a Clipper."
+            else:
+                text = "Respuesta no valida."
+            data = f"<meta charset='utf-8'><body style='font-family:sans-serif;background:#111;color:#fc0;padding:40px'>{text}".encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    srv = HTTPServer(("127.0.0.1", 0), CB)
+    srv.timeout = 5
+    redirect = f"http://127.0.0.1:{srv.server_address[1]}"
+    url = GOOGLE_AUTH_URL + "?" + urllib.parse.urlencode({
+        "client_id": GOOGLE_CLIENT_ID, "redirect_uri": redirect, "response_type": "code",
+        "scope": "openid email", "prompt": "select_account", "state": state,
+        "code_challenge": challenge, "code_challenge_method": "S256"})
+    GLOGIN.update(status="waiting", msg="Elige tu cuenta de Google en el navegador...", id_token="", email="")
+
+    def wait():
+        end = time.time() + 300
+        try:
+            while not result and time.time() < end:
+                srv.handle_request()
+            if not result.get("code"):
+                GLOGIN.update(status="error", msg="No se confirmo la cuenta (o se acabo el tiempo).")
+                return
+            fields = {"code": result["code"], "client_id": GOOGLE_CLIENT_ID, "redirect_uri": redirect,
+                      "grant_type": "authorization_code", "code_verifier": verifier}
+            if GOOGLE_CLIENT_SECRET:
+                fields["client_secret"] = GOOGLE_CLIENT_SECRET
+            r = yt_post_form(GOOGLE_TOKEN_URL, fields)
+            idt = r.get("id_token", "")
+            if not idt:
+                raise RuntimeError("Google no devolvio la cuenta. Intenta otra vez.")
+            GLOGIN.update(status="ok", msg="Cuenta confirmada.", id_token=idt, email=_jwt_email(idt))
+        except Exception as e:  # noqa: BLE001
+            GLOGIN.update(status="error", msg=str(e)[:200])
+        finally:
+            srv.server_close()
+
+    threading.Thread(target=wait, daemon=True).start()
+    return url
 
 
 def machine_id():
@@ -3417,10 +3496,15 @@ def lic_activate(codigo):
     codigo = (codigo or "").strip().upper()
     if not re.fullmatch(r"CLIP(-[A-F0-9]{4}){3}", codigo):
         return False, "El codigo no tiene el formato correcto (CLIP-XXXX-XXXX-XXXX)."
-    mid = machine_id()
+    body = {"codigo": codigo, "maquina": machine_id()}
+    if GOOGLE_CLIENT_ID:
+        if not GLOGIN.get("id_token"):
+            return False, "Primero inicia sesion con tu cuenta de Google."
+        body["id_token"] = GLOGIN["id_token"]
+    mid = body["maquina"]
     try:
         req = urllib.request.Request(LICENSE_URL.rstrip("/") + "/activar", method="POST",
-                                     data=json.dumps({"codigo": codigo, "maquina": mid}).encode(),
+                                     data=json.dumps(body).encode(),
                                      headers={"Content-Type": "application/json", "User-Agent": "Clipper"})
         with urllib.request.urlopen(req, timeout=15) as r:
             d = json.load(r)
@@ -3433,7 +3517,8 @@ def lic_activate(codigo):
         return False, "No hay conexion con el servidor de licencias."
     if not d.get("ok") or not d.get("token"):
         return False, d.get("msg", "No se pudo activar.")
-    _lic_save({"token": d["token"], "machine": mid, "checked": time.time()})
+    _lic_save({"token": d["token"], "machine": mid, "checked": time.time(),
+               "email": GLOGIN.get("email", "")})
     return True, "Clipper activado."
 
 
@@ -3803,6 +3888,16 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         u = urlparse(self.path)
         q = parse_qs(u.query)
+        if u.path in ("/licencia/google/iniciar", "/licencia/google/estado"):
+            if not self._auth(q):
+                return
+            if u.path.endswith("/iniciar"):
+                try:
+                    webbrowser.open(google_login_start())
+                    return self._json({"ok": True})
+                except ValueError as e:
+                    return self._json({"ok": False, "msg": str(e)}, 400)
+            return self._json({"status": GLOGIN["status"], "msg": GLOGIN["msg"], "email": GLOGIN["email"]})
         if LICENSE_URL and u.path not in ("/", "/caps", "/status", "/favicon.ico") and not lic_status()[0]:
             return self._json({"error": "Activa Clipper con tu codigo de compra."}, 403)
         if u.path == "/":
@@ -3843,7 +3938,8 @@ class Handler(BaseHTTPRequestHandler):
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
                         "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key()),
-                        "licencia_ok": lic_ok, "licencia_msg": lic_msg})
+                        "licencia_ok": lic_ok, "licencia_msg": lic_msg,
+                        "licencia_google": bool(GOOGLE_CLIENT_ID)})
         elif u.path == "/report":
             self._json(day_report())
         elif u.path == "/hw":
