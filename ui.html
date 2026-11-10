@@ -565,6 +565,8 @@ input[type=range]{accent-color:var(--yellow);width:100%}
       <input type="text" id="furl" placeholder="http://localhost:3001/v1" autocomplete="off" style="width:100%;margin-bottom:6px">
       <div style="display:flex;gap:6px"><input type="password" id="fkey" placeholder="Pega tu clave de FreeLLMAPI aquí" autocomplete="off"><button class="btn sm" id="fsave">Guardar</button><button class="btn sm" id="ftest">Probar</button><button class="btn sm danger hidden" id="fdel">Quitar</button></div>
       <div class="note" id="fnote" style="margin-top:4px">Se usa al final, si Gemini y Groq no responden (o si es lo único que tienes). Tiene que estar encendido en tu PC.</div>
+      <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap"><button class="btn sm" id="kexp">Guardar copia de mis claves</button><button class="btn sm" id="kimp">Cargar copia</button><input type="file" id="kfile" accept=".json,application/json" class="hidden"></div>
+      <div class="note" id="knote" style="margin-top:4px">La copia guarda tus claves en un archivo de texto. Guárdala en un lugar seguro y no la compartas.</div>
     </div>
 
     <!-- VIDEO -->
@@ -867,6 +869,14 @@ $("#fsave").onclick=async()=>{const k=$("#fkey").value.trim(),url=$("#furl").val
 $("#ftest").onclick=async()=>{const b=$("#ftest"),n=$("#fnote");b.disabled=true;n.textContent="Probando FreeLLMAPI...";
   try{const k=$("#fkey").value.trim(),url=$("#furl").value.trim(),r=await post("/freellm/test",{key:k,url});n.textContent=(r.ok?"✓ ":"✗ ")+r.msg;if(r.ok&&(k||url)){const s=await post("/freellm",{key:k,url});if(!s.error){$("#fkey").value="";n.textContent+=" Guardado.";loadCaps()}}n.style.color=r.ok?"var(--green)":"var(--red)"}
   catch(e){n.textContent="✗ No se pudo probar.";n.style.color="var(--red)"}b.disabled=false};
+$("#kexp").onclick=async()=>{const n=$("#knote");try{const d=await(await API("/keys/export")).json();
+  const blob=new Blob([JSON.stringify(d,null,1)],{type:"application/json"});const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download="clipper-claves.json";a.click();
+  n.textContent="Copia creada: clipper-claves.json. Guárdala en un lugar seguro.";n.style.color="var(--green)"}catch(e){n.textContent="✗ No se pudo crear la copia.";n.style.color="var(--red)"}};
+$("#kimp").onclick=()=>$("#kfile").click();
+$("#kfile").onchange=async()=>{const f=$("#kfile").files[0];if(!f)return;const n=$("#knote");
+  try{const d=JSON.parse(await f.text());const r=await post("/keys/import",d);
+    if(r.error){n.textContent="✗ "+r.error;n.style.color="var(--red)"}else{n.textContent="✓ Claves cargadas.";n.style.color="var(--green)";loadCaps()}}
+  catch(e){n.textContent="✗ Ese archivo no sirve.";n.style.color="var(--red)"}$("#kfile").value=""};
 $("#fdel").onclick=async()=>{await post("/freellm",{key:"",url:""});$("#furl").value="";loadCaps()};
 $("#qdel").onclick=async()=>{await post("/groqkey",{key:""});loadCaps()};
 $("#gdel").onclick=async()=>{await post("/apikey",{key:""});S.ai_title=false;paint();persist();loadCaps()};

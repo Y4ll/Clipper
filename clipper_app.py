@@ -4077,6 +4077,29 @@ class Handler(BaseHTTPRequestHandler):
             body = self._body_json(2000) or {}
             ok, msg = freellm_test(body.get("key") or None, body.get("url") or None)
             self._json({"ok": ok, "msg": msg})
+        elif u.path == "/keys/export":
+            # copia de tus claves de IA (las guarda la persona donde quiera); el archivo es texto plano: avisado en la app
+            self._json({"app": "Clipper", "version": 1,
+                        "gemini": get_gemini_key(), "groq": get_groq_key(),
+                        "freellm": get_freellm_key(), "freellm_url": get_freellm_url()})
+        elif u.path == "/keys/import":
+            body = self._body_json(20000) or {}
+            if body.get("app") != "Clipper":
+                self._json({"error": "Ese archivo no es una copia de claves de Clipper."}, 400)
+                return
+            bad = []
+            for name, fn in (("gemini", set_gemini_key), ("groq", set_groq_key)):
+                v = str(body.get(name) or "").strip()
+                if v and not fn(v):
+                    bad.append(name)
+            fk = str(body.get("freellm") or "").strip()
+            if fk or body.get("freellm_url"):
+                if not set_freellm(fk, str(body.get("freellm_url") or "")):
+                    bad.append("freellm")
+            if bad:
+                self._json({"error": "Estas claves no se pudieron cargar: " + ", ".join(bad)}, 400)
+            else:
+                self._json({"ok": True})
         elif u.path == "/freellm":
             body = self._body_json(2000) or {}
             ok = set_freellm(body.get("key", ""), body.get("url", ""))
