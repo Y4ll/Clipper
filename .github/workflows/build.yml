@@ -77,24 +77,6 @@ jobs:
           if (-not (Test-Path pack\whisper\whisper-cli.exe) -or -not (Test-Path pack\whisper\ggml-base-q5_1.bin)) {
             throw "Falta Whisper (whisper-cli.exe o el modelo): el build se detiene para no publicar una version sin subtitulos"
           }
-          # FreeLLMAPI (opcional): si algo falla aqui, el build sigue sin el. Nunca detiene la publicacion.
-          try {
-            git clone --depth 1 https://github.com/tashfeenahmed/freellmapi pack\freellm\app
-            if ($LASTEXITCODE -ne 0) { throw "git clone fallo" }
-            $nodeDir = Split-Path (Get-Command node).Source
-            Copy-Item $nodeDir pack\freellm\node -Recurse
-            Push-Location pack\freellm\app
-            & ..\node\node.exe ..\node\node_modules\npm\bin\npm-cli.js install
-            if ($LASTEXITCODE -ne 0) { throw "npm install fallo" }
-            Pop-Location
-            Remove-Item pack\freellm\app\.git -Recurse -Force -ErrorAction SilentlyContinue
-            Write-Host "FreeLLMAPI incluido"
-          } catch {
-            Write-Host "AVISO: FreeLLMAPI no se incluyo: $_"
-            Pop-Location -ErrorAction SilentlyContinue
-            Remove-Item pack\freellm -Recurse -Force -ErrorAction SilentlyContinue
-          }
-          $global:LASTEXITCODE = 0
           Compress-Archive -Path pack\* -DestinationPath Clipper-Windows.zip
 
       - name: Crear instalador (Inno Setup)

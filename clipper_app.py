@@ -141,7 +141,7 @@ FONT_CANDIDATES = [
     "C:/Windows/Fonts/arial.ttf",
 ]
 
-SETTING_KEYS = {"freellm_dir", "skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
+SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on", "watch_dir", "vocab", "censor", "fade_io", "no_filler", "cta_on", "cta_text", "handle_text", "schedule_on", "schedule_at", "schedule_gap", "fps30", "n", "len", "preset", "mode", "zoom", "shake", "texts", "text_pos",
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len", "yt_category", "yt_shorts", "yt_desc", "yt_tags", "yt_notify", "yt_max",
@@ -967,7 +967,7 @@ def gemini_title(text, lang, tone="directo", ctx=""):
     """Titulo gancho, descripcion y hashtags con IA (Gemini y, si falla o no hay clave, Groq).
     Solo se envia el texto del clip, nunca el video."""
     key = get_gemini_key()
-    if (not key and not get_groq_key() and not get_freellm_key()) or len(text.strip()) < 15:
+    if (not key and not get_groq_key()) or len(text.strip()) < 15:
         return None
     idioma = {"en": "ingles", "es": "espanol"}.get(lang, "el mismo idioma del texto")
     tono = {"directo": "directo y llamativo", "gracioso": "gracioso y con humor",
@@ -1015,14 +1015,7 @@ def gemini_title(text, lang, tone="directo", ctx=""):
                 last_err = e
                 break
     if get_groq_key():   # sin Gemini, o Gemini fallo: respaldo con Groq
-        try:
-            return parse(groq_json(prompt))
-        except RuntimeError as e:
-            last_err = e
-            if not get_freellm_key():
-                raise
-    if get_freellm_key():   # ultimo respaldo (o unico proveedor): FreeLLMAPI local
-        return parse(freellm_json(prompt))
+        return parse(groq_json(prompt))
     raise RuntimeError(f"Gemini no respondio ({getattr(last_err, 'code', 'error')})")
 
 
@@ -1453,173 +1446,6 @@ def set_groq_key(key):
     except OSError:
         pass
     return True
-
-
-FREELLM_KEY_FILE = DATA_DIR / "freellm.key"
-FREELLM_URL_FILE = DATA_DIR / "freellm.url"
-FREELLM_DEFAULT = "http://localhost:3001/v1"
-
-
-def get_freellm_key():
-    try:
-        return FREELLM_KEY_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def get_freellm_url():
-    try:
-        u = FREELLM_URL_FILE.read_text(encoding="utf-8").strip().rstrip("/")
-        return u or FREELLM_DEFAULT
-    except OSError:
-        return FREELLM_DEFAULT
-
-
-def set_freellm(key, url=""):
-    """Guarda la clave y la direccion de FreeLLMAPI (proxy local compatible con OpenAI). Clave vacia = quitar."""
-    key, url = (key or "").strip(), (url or "").strip().rstrip("/")
-    if not key and not url:
-        FREELLM_KEY_FILE.unlink(missing_ok=True)
-        FREELLM_URL_FILE.unlink(missing_ok=True)
-        return True
-    if key and not re.fullmatch(r"[A-Za-z0-9_.\-]{8,200}", key):
-        return False
-    if url and not re.fullmatch(r"https?://[A-Za-z0-9_.\-]+(:\d{1,5})?(/[A-Za-z0-9_.\-/]*)?", url):
-        return False
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    if key:
-        FREELLM_KEY_FILE.write_text(key, encoding="utf-8")
-        try:
-            os.chmod(FREELLM_KEY_FILE, 0o600)
-        except OSError:
-            pass
-    if url:
-        FREELLM_URL_FILE.write_text(url, encoding="utf-8")
-    return True
-
-
-FREELLM_PROC = {"p": None, "log": ""}
-
-
-def freellm_bundled():
-    """FreeLLMAPI que viene con el instalador: app/ (ya con sus paquetes) y node/ (Node + npm), junto a Clipper.exe."""
-    base = Path(sys.executable).parent / "freellm"
-    node = base / "node" / ("node.exe" if IS_WIN else "node")
-    cli = base / "node" / "node_modules" / "npm" / "bin" / "npm-cli.js"
-    app = base / "app"
-    if node.is_file() and cli.is_file() and (app / "package.json").is_file():
-        return app, [str(node), str(cli)], str(node.parent)
-    return None
-
-
-def freellm_start(folder):
-    """Enciende FreeLLMAPI (npm run dev). Sin carpeta usa el que trae el instalador. (ok, mensaje)"""
-    folder = Path(str(folder or "").strip().strip('"'))
-    if FREELLM_PROC["p"] and FREELLM_PROC["p"].poll() is None:
-        return True, "FreeLLMAPI ya esta encendido."
-    bundled = freellm_bundled()
-    prefix, extra_path = None, None
-    if not str(folder) or str(folder) == ".":
-        if not bundled:
-            return False, "No hay FreeLLMAPI: elige la carpeta donde lo instalaste."
-        folder, prefix, extra_path = bundled
-    elif bundled and folder.resolve() == bundled[0].resolve():
-        folder, prefix, extra_path = bundled
-    if not (folder / "package.json").is_file():
-        return False, "No encuentro FreeLLMAPI en esa carpeta (falta package.json). Elige la carpeta freellmapi."
-    if prefix is None:
-        npm = shutil.which("npm")
-        if not npm:
-            return False, "Falta Node.js. Instalalo desde nodejs.org y reinicia Clipper."
-        prefix = [npm]
-    env_file = folder / ".env"
-    if not env_file.exists():   # clave de cifrado propia de esta PC (no la misma para todos)
-        env_file.write_text(f"PORT=3001\nENCRYPTION_KEY={secrets.token_hex(32)}\n", encoding="utf-8")
-    env = dict(os.environ)
-    if extra_path:
-        env["PATH"] = extra_path + os.pathsep + env.get("PATH", "")
-    try:
-        log = open(DATA_DIR / "freellm.log", "w", encoding="utf-8")
-        FREELLM_PROC["p"] = subprocess.Popen(prefix + ["run", "dev"], cwd=str(folder), stdout=log, stderr=subprocess.STDOUT,
-                                             stdin=subprocess.DEVNULL, creationflags=NO_WINDOW, env=env,
-                                             shell=(not extra_path) and IS_WIN and prefix[0].lower().endswith(".cmd"))
-    except OSError as e:
-        return False, f"No se pudo encender: {str(e)[:120]}"
-    for _ in range(40):   # espera a que conteste (hasta 20 s)
-        time.sleep(0.5)
-        if FREELLM_PROC["p"].poll() is not None:
-            return False, "FreeLLMAPI se cerro al iniciar. Revisa freellm.log en la carpeta de datos de Clipper."
-        ok, _m = freellm_test(get_freellm_key() or "x", get_freellm_url())
-        if ok or "rechazo" in _m:
-            return True, "FreeLLMAPI encendido."
-    return True, "Encendido, pero todavia no responde. Espera un poco y pulsa Probar."
-
-
-def freellm_stop():
-    p = FREELLM_PROC["p"]
-    if p and p.poll() is None:
-        p.terminate()
-        try:
-            p.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            p.kill()
-    FREELLM_PROC["p"] = None
-    return True, "FreeLLMAPI apagado."
-
-
-import atexit
-import secrets
-atexit.register(freellm_stop)
-
-
-def freellm_test(key=None, url=None):
-    """Comprueba que FreeLLMAPI esta encendido y acepta la clave (lista los modelos). (ok, mensaje)"""
-    key = (key or get_freellm_key() or "").strip()
-    base = (url or get_freellm_url() or FREELLM_DEFAULT).strip().rstrip("/")
-    if not key:
-        return False, "No hay clave de FreeLLMAPI guardada."
-    req = urllib.request.Request(f"{base}/models", headers={"Authorization": f"Bearer {key}", "User-Agent": "Clipper"})
-    try:
-        with urllib.request.urlopen(req, timeout=10) as r:
-            json.load(r)
-        return True, "FreeLLMAPI funciona."
-    except urllib.error.HTTPError as e:
-        return False, {401: "FreeLLMAPI rechazo la clave (copiala de Keys -> Unified API key).",
-                       403: "FreeLLMAPI bloqueo la clave."}.get(e.code, f"FreeLLMAPI respondio con error {e.code}.")
-    except Exception:  # noqa: BLE001
-        return False, f"No se pudo conectar con {base}. Enciende FreeLLMAPI (npm run dev) y revisa la direccion."
-
-
-def freellm_json(prompt, temperature=0.7):
-    """Pide a FreeLLMAPI (modelo 'auto') una respuesta JSON. Devuelve dict o lanza RuntimeError."""
-    key = get_freellm_key()
-    if not key:
-        raise RuntimeError("Sin clave de FreeLLMAPI")
-    base = get_freellm_url()
-    last = "error"
-    for strict in (True, False):   # algunos modelos gratis no aceptan response_format
-        payload = {"model": "auto", "temperature": temperature, "messages": [{"role": "user", "content": prompt}]}
-        if strict:
-            payload["response_format"] = {"type": "json_object"}
-        req = urllib.request.Request(f"{base}/chat/completions", data=json.dumps(payload).encode("utf-8"), method="POST",
-                                     headers={"Authorization": f"Bearer {key}", "User-Agent": "Clipper",
-                                              "Content-Type": "application/json"})
-        try:
-            with urllib.request.urlopen(req, timeout=60) as r:
-                text = json.load(r)["choices"][0]["message"]["content"]
-            m = re.search(r"\{.*\}", text, re.S)
-            return json.loads(m.group(0) if m else text)
-        except urllib.error.HTTPError as e:
-            last = e.code
-            if e.code in (400, 422) and strict:
-                continue
-            break
-        except Exception as e:  # noqa: BLE001
-            last = type(e).__name__
-            if strict and isinstance(e, ValueError):
-                continue
-            break
-    raise RuntimeError(f"FreeLLMAPI no respondio ({last})")
 
 
 def groq_test(key=None):
@@ -3273,7 +3099,7 @@ def render_job(job_id, video, segments, o):
 
             cues = []
             heard = []
-            if (o["subs"] or o.get("censor") or (o["ai_title"] and (get_gemini_key() or get_groq_key() or get_freellm_key()))) and font:
+            if (o["subs"] or o.get("censor") or (o["ai_title"] and (get_gemini_key() or get_groq_key()))) and font:
                 try:
                     got = None if o["sub_translate"] else heard_cues(job_id, start, length, o["sub_lang"])
                     if got is None:
@@ -3906,8 +3732,7 @@ class Handler(BaseHTTPRequestHandler):
                         "ytdlp": importlib.util.find_spec("yt_dlp") is not None,
                         "encoder": ENCODER["name"], "encoder_ready": ENCODER["ready"],
                         "font": find_font() is not None, "lan": LAN_MODE,
-                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key()),
-                        "freellm": bool(get_freellm_key()), "freellm_url": get_freellm_url()})
+                        "gemini": bool(get_gemini_key()), "groq": bool(get_groq_key())})
         elif u.path == "/report":
             self._json(day_report())
         elif u.path == "/hw":
@@ -4147,46 +3972,6 @@ class Handler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             self._json({"ok": True})
-        elif u.path == "/freellm/start":
-            body = self._body_json(2000) or {}
-            ok, msg = freellm_start(body.get("folder", ""))
-            if ok and body.get("folder"):
-                st = load_settings(); st["freellm_dir"] = str(body.get("folder")).strip(); save_settings(st)
-            self._json({"ok": ok, "msg": msg})
-        elif u.path == "/freellm/stop":
-            ok, msg = freellm_stop()
-            self._json({"ok": ok, "msg": msg})
-        elif u.path == "/freellm/test":
-            body = self._body_json(2000) or {}
-            ok, msg = freellm_test(body.get("key") or None, body.get("url") or None)
-            self._json({"ok": ok, "msg": msg})
-        elif u.path == "/keys/export":
-            # copia de tus claves de IA (las guarda la persona donde quiera); el archivo es texto plano: avisado en la app
-            self._json({"app": "Clipper", "version": 1,
-                        "gemini": get_gemini_key(), "groq": get_groq_key(),
-                        "freellm": get_freellm_key(), "freellm_url": get_freellm_url()})
-        elif u.path == "/keys/import":
-            body = self._body_json(20000) or {}
-            if body.get("app") != "Clipper":
-                self._json({"error": "Ese archivo no es una copia de claves de Clipper."}, 400)
-                return
-            bad = []
-            for name, fn in (("gemini", set_gemini_key), ("groq", set_groq_key)):
-                v = str(body.get(name) or "").strip()
-                if v and not fn(v):
-                    bad.append(name)
-            fk = str(body.get("freellm") or "").strip()
-            if fk or body.get("freellm_url"):
-                if not set_freellm(fk, str(body.get("freellm_url") or "")):
-                    bad.append("freellm")
-            if bad:
-                self._json({"error": "Estas claves no se pudieron cargar: " + ", ".join(bad)}, 400)
-            else:
-                self._json({"ok": True})
-        elif u.path == "/freellm":
-            body = self._body_json(2000) or {}
-            ok = set_freellm(body.get("key", ""), body.get("url", ""))
-            self._json({"ok": ok} if ok else {"error": "La clave o la direccion no parecen validas."}, 200 if ok else 400)
         elif u.path == "/groqkey/test":
             body = self._body_json(2000) or {}
             ok, msg = groq_test(body.get("key") or None)
