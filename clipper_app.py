@@ -145,7 +145,7 @@ SETTING_KEYS = {"skip_repeats", "fast_link", "auto_hw", "trim_start", "watch_on"
                 "text_color", "text_size", "subs", "sub_lang", "logo_pos", "fps", "gpu",
                 "review", "autosave", "out_dir", "quality", "smart", "intro_seen", "snap", "cam_corner", "cam_size", "ai_title", "ai_listen", "punch", "sub_style", "zoom_auto", "bar", "enhance", "cut_pauses", "music", "music_vol", "sub_translate", "parts", "parts_n", "parts_auto", "parts_full", "ai_tone", "res", "yt_auto", "yt_privacy", "clip_every_min",
                 "mon_clip_every", "mon_clip_len", "mon_max_hours", "mon_quality", "mon_save_stream", "mon_auto_clips", "live_clip_len", "yt_category", "yt_shorts", "yt_desc", "yt_tags", "yt_notify", "yt_max",
-                "long_on", "long_min", "long_mode", "long_fmt"}
+                "long_on", "long_min", "long_mode", "long_fmt", "long_yt", "long_yt_privacy"}
 VIDEO_EXTS = (".mp4", ".mov", ".mkv", ".webm", ".avi", ".m4v")
 LOGO_EXTS = (".png", ".jpg", ".jpeg", ".webp")
 MUSIC_EXTS = (".mp3", ".wav", ".m4a", ".ogg", ".aac", ".flac")
@@ -2203,10 +2203,15 @@ def long_cfg():
     mn = int(cfg.get("long_min") or 20)
     if mn not in LONG_MINUTES:
         mn = 20
+    priv = cfg.get("long_yt_privacy") or "private"
+    if priv not in ("private", "unlisted", "public"):
+        priv = "private"
     return {
         "min":  mn,
         "mode": cfg.get("long_mode") or "seq",   # seq | best | both
         "fmt":  cfg.get("long_fmt")  or "orig",  # orig | vert | both
+        "yt":   bool(cfg.get("long_yt")),         # subir a YouTube al terminar
+        "yt_privacy": priv,
     }
 
 def _long_cut_horiz(src, dest, start_s, dur_s, job_id):
@@ -2285,6 +2290,13 @@ def _long_save(job, src, lc, start_abs, dur_s, part_num, seg_num, job_id):
         if ok:
             saved.append(str(dest))
             job.setdefault("_long_saved", []).append(str(dest))
+            if lc.get("yt") and yt_connected():
+                try:
+                    titulo = f"{job.get('name') or 'Directo'} — {round(dur_min)} min (p{part_num}s{seg_num}{suffix})"
+                    vid_id = yt_upload_file(str(dest), titulo[:100], "", [], lc["yt_privacy"])
+                    job.setdefault("warnings", []).append(f"Video largo subido a YouTube ({lc['yt_privacy']}): https://youtu.be/{vid_id}")
+                except Exception as e:  # noqa: BLE001
+                    job.setdefault("warnings", []).append(f"No se pudo subir video largo a YouTube: {e}")
         return ok
 
     if lc["fmt"] in ("orig", "both"):
@@ -2300,12 +2312,26 @@ def _long_save(job, src, lc, start_abs, dur_s, part_num, seg_num, job_id):
             if _long_cut_horiz(src, dest2, start_abs, dur_s, job_id):
                 saved.append(str(dest2))
                 job.setdefault("_long_saved", []).append(str(dest2))
+                if lc.get("yt") and yt_connected():
+                    try:
+                        titulo2 = f"{job.get('name') or 'Directo'} — {round(dur_min)} min seguidos (p{part_num}s{seg_num})"
+                        vid2 = yt_upload_file(str(dest2), titulo2[:100], "", [], lc["yt_privacy"])
+                        job.setdefault("warnings", []).append(f"Video largo subido a YouTube ({lc['yt_privacy']}): https://youtu.be/{vid2}")
+                    except Exception as e:  # noqa: BLE001
+                        job.setdefault("warnings", []).append(f"No se pudo subir video largo a YouTube: {e}")
         if lc["fmt"] in ("vert", "both"):
             base3 = f"{stem}_largo_p{part_num}s{seg_num}_seq_vert"
             dest3 = unique_path(out_dir, base3, ".mp4")
             if _long_cut_vert(src, dest3, start_abs, dur_s, job_id):
                 saved.append(str(dest3))
                 job.setdefault("_long_saved", []).append(str(dest3))
+                if lc.get("yt") and yt_connected():
+                    try:
+                        titulo3 = f"{job.get('name') or 'Directo'} — {round(dur_min)} min seguidos vertical (p{part_num}s{seg_num})"
+                        vid3 = yt_upload_file(str(dest3), titulo3[:100], "", [], lc["yt_privacy"])
+                        job.setdefault("warnings", []).append(f"Video largo subido a YouTube ({lc['yt_privacy']}): https://youtu.be/{vid3}")
+                    except Exception as e:  # noqa: BLE001
+                        job.setdefault("warnings", []).append(f"No se pudo subir video largo a YouTube: {e}")
 
     return saved
 

@@ -386,6 +386,10 @@ input[type=range]{accent-color:var(--yellow);width:100%}
           <div class="fld"><label for="long_fmt">Formato:</label><select id="long_fmt"><option value="orig" selected>Horizontal</option><option value="vert">Vertical 9:16</option><option value="both">Los dos</option></select></div>
         </div>
         <p class="note" id="longNote" style="margin:4px 0 0"></p>
+        <label class="ck" id="longYtRow" style="margin-top:6px"><input type="checkbox" id="long_yt"><span>Subir a YouTube al terminar cada tramo<small id="longYtNote">Necesitas conectar YouTube en Ajustes → Subtítulos e IA</small></span></label>
+        <div id="longYtPrivBox" style="display:none;margin-top:4px">
+          <div class="fld"><label for="long_yt_privacy">Privacidad:</label><select id="long_yt_privacy"><option value="private" selected>Privado</option><option value="unlisted">No listado</option><option value="public">Público</option></select></div>
+        </div>
       </div>
     </details>
   </section>
@@ -615,7 +619,7 @@ document.querySelectorAll(".buildtxt").forEach(e=>e.textContent=BUILD);
 
 /* ---------- ajustes ---------- */
 let QUERY="";
-const S={skip_repeats:true,fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:"",long_on:false,long_min:30,long_mode:"seq",long_fmt:"orig"};
+const S={skip_repeats:true,fast_link:true,auto_hw:true,n:5,len:30,preset:"tiktok",mode:"blur",zoom:true,shake:false,texts:[],text_pos:"top",text_color:"yellow",text_size:"m",subs:false,sub_lang:"es",logo_pos:"tr",fps:30,quality:"fast",ai_tone:"directo",res:1080,parts:false,parts_n:2,sub_style:"karaoke",sub_translate:false,zoom_auto:false,bar:false,enhance:false,cut_pauses:false,music:false,music_vol:25,punch:false,ai_title:false,ai_rank:false,live_clips:false,clip_every_min:15,smart:false,snap:true,cam_corner:"br",cam_size:28,gpu:true,review:true,autosave:false,out_dir:"",long_on:false,long_min:30,long_mode:"seq",long_fmt:"orig",long_yt:false,long_yt_privacy:"private"};
 let saveT=null;
 $("#query").oninput=e=>{QUERY=e.target.value.trim()};
 document.querySelectorAll("#pick .pc").forEach(b=>b.onclick=()=>{if(b.disabled)return;const m=b.dataset.m;S.smart=m!=="sin";S.ai_rank=m==="ia";paint();persist()});
@@ -639,6 +643,8 @@ function paint(){
   $("#long_mode").value=["seq","best","both"].includes(S.long_mode)?S.long_mode:"seq";
   $("#long_fmt").value=["orig","vert","both"].includes(S.long_fmt)?S.long_fmt:"orig";
   longNote();
+  $("#long_yt").checked=!!S.long_yt;$("#longYtPrivBox").style.display=S.long_yt?"":"none";
+  $("#long_yt_privacy").value=["private","unlisted","public"].includes(S.long_yt_privacy)?S.long_yt_privacy:"private";
   for(const k of ["zoom","shake","punch","subs","gpu","review","autosave","smart","snap","ai_title","ai_rank","live_clips","sub_translate","zoom_auto","bar","enhance","cut_pauses","auto_hw","fast_link","skip_repeats","no_filler","trim_start","fade_io","censor","watch_on","cta_on","music","parts","ai_listen","schedule_on"])$("#"+k).checked=!!S[k];
   {const m=S.ai_rank?"ia":S.smart?"voz":"sin";document.querySelectorAll("#pick .pc").forEach(b=>b.classList.toggle("on",b.dataset.m===m))}
   $("#fillerBox").classList.toggle("hidden",S.mode!=="split");
@@ -750,6 +756,9 @@ async function loadYoutube(){
   $("#yt_auto").checked=!!d.auto&&d.connected;$("#yt_privacy").value=d.privacy;
   if(d.auth.msg)$("#ytMsg").textContent=d.auth.msg;
   if(d.connected&&YTPOLL){clearInterval(YTPOLL);YTPOLL=null}
+  $("#longYtRow").style.opacity=d.connected?"1":"0.5";
+  $("#longYtNote").textContent=d.connected?"Se sube automáticamente al terminar cada tramo.":"Necesitas conectar YouTube en Ajustes → Subtítulos e IA";
+  if(!d.connected){S.long_yt=false;$("#long_yt").checked=false;$("#longYtPrivBox").style.display="none"}
 }
 $("#ytSave").onclick=async()=>{
   const r=await post("/youtube/config",{client_id:$("#ytId").value.trim(),client_secret:$("#ytSecret").value.trim()});
@@ -768,6 +777,8 @@ $("#long_on").onchange=e=>{S.long_on=e.target.checked;$("#longBox").style.displa
 $("#long_min").onchange=e=>{S.long_min=Number(e.target.value)||30;longNote();persist()};
 $("#long_mode").onchange=e=>{S.long_mode=e.target.value;persist()};
 $("#long_fmt").onchange=e=>{S.long_fmt=e.target.value;longNote();persist()};
+$("#long_yt").onchange=e=>{S.long_yt=e.target.checked;$("#longYtPrivBox").style.display=e.target.checked?"":"none";persist()};
+$("#long_yt_privacy").onchange=e=>{S.long_yt_privacy=e.target.value;persist()};
 $("#watch_dir").oninput=e=>{S.watch_dir=e.target.value.trim();persist()};$("#vocab").oninput=e=>{S.vocab=e.target.value;persist()};$("#cta_text").oninput=e=>{S.cta_text=e.target.value;persist()};$("#handle_text").oninput=e=>{S.handle_text=e.target.value;persist()};
 $("#schedule_at").onchange=e=>{S.schedule_at=e.target.value;persist()};
 $("#schedule_gap").onchange=e=>{S.schedule_gap=Math.max(5,Math.min(1440,+e.target.value||60));paint();persist()};
